@@ -28,6 +28,19 @@ const patch = readFileSync('cordis.patch.yml', 'utf8');
 if (!patch.includes(`name: '${pkg.name}'`)) problems.push(`cordis.patch.yml 的 name 必须等于包名 ${pkg.name}`);
 if (!patch.includes(`id: ${pkg.name}`)) problems.push(`cordis.patch.yml 的 id 建议等于包名 ${pkg.name}`);
 
+// 2.5 peer 范围：预发布标签必须逐段展开。
+// 按 node-semver 规则，`>=0.2.1-rc.1 <0.3` 匹配不到 `0.2.2-rc.1` 这类**更高**的预发布
+// 版本（范围里没有与它 major.minor.patch 相同、又带预发布标签的比较符），于是装了新
+// 预发布内核的用户会看到「版本不兼容」而不是能用。声明的每一段都要带自己的 rc 分支。
+const llmPeer = pkg.peerDependencies?.['@deepseek-ai/dsh-llm'];
+if (typeof llmPeer !== 'string') problems.push('缺少 @deepseek-ai/dsh-llm 的 peer 声明');
+else {
+  const segments = llmPeer.split('||').map((part) => part.trim());
+  const coversRc = segments.every((segment) => segment.includes('-rc.') || !/^>=\d/.test(segment));
+  if (!coversRc) problems.push(`peer 范围里有缺少 rc 分支的段（会匹配不到更高的预发布内核）：${llmPeer}`);
+  else console.log(`ok   peer 范围按 rc 逐段展开（${String(segments.length)} 段）`);
+}
+
 // 3. 真的 import 一次，看四件套是否齐全。
 let module;
 try {

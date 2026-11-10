@@ -39,8 +39,9 @@ dsh plugin --profile desktop add link:/path/to/dsh-connect-raccoon
 
 装完**完全退出 DSH（含托盘）再启动**，然后在「设置 → 插件 → 商汤小浣熊」里登录。
 
-**版本对应**：本插件声明支持 `@deepseek-ai/dsh-llm >= 0.2.1-rc.1 < 0.3.0-0`，
-在 Windows + Desktop profile 上开发。其他内核世代需要自己核对 peer 范围。
+**版本对应**：本插件声明支持 `@deepseek-ai/dsh-llm` 的 `0.2.1-rc.1` – `0.2.9` 各预发布线
+与 `0.2.x` 正式版（范围里逐段列出 rc 分支 —— 写成 `>=0.2.1-rc.1 <0.3` 反而匹配不到
+`0.2.2-rc.1` 这类更高的预发布内核）。在 Windows + Desktop profile 上开发与验证。
 
 ---
 
