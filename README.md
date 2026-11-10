@@ -193,15 +193,19 @@ access token 过期后要重扫 —— 所以它是快路径，不是主线。
 ## 开发
 
 ```sh
-# 一条命令跑完全部校验（版本 → 类型 → 构建 → 客户端自检 → 文档契约 → 宿主装载 → 打包 → 测试）
+# 一条命令跑完全部校验（版本 → 类型 → 构建 → 客户端自检 → 文档契约 → 宿主装载
+#                    → 打包 → 116 测试 → 预览渲染 → apply 冒烟 → 真 Cordis 装载 → 安装一致性）
 node scripts/gate.mjs
+
+# 再加两项「对着运行中的 DSH 验活体」：状态路由、回环回调端到端
+node scripts/gate.mjs --live
 ```
 
 本机 PATH 上没有 node 时用运行时自带的那份：
 
 ```sh
 NODE="C:/Users/<you>/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node.exe"
-"$NODE" scripts/gate.mjs
+"$NODE" scripts/gate.mjs --live
 ```
 
 单独跑测试：

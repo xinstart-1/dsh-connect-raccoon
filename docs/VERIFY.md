@@ -91,7 +91,8 @@ dsh plugin --profile desktop add link:X:/Agent/deepseek插件/dsh-connect-raccoo
 
 ```sh
 NODE="C:/Users/<you>/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node.exe"
-"$NODE" scripts/gate.mjs
+"$NODE" scripts/gate.mjs          # 13 项：源码/构建/静态检查/单测
+"$NODE" scripts/gate.mjs --live   # 再加 2 项：对着**运行中的**宿主验活体
 ```
 
 | 步骤 | 覆盖 |
@@ -102,13 +103,30 @@ NODE="C:/Users/<you>/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin
 | `copy-client` | 浏览器半边拷贝完整性（字节数比对） |
 | `check-client` | 语法 / 无 import-export / zh-en 同键 / `t()` 键存在 / 路径逐字一致 / 无令牌字段 |
 | `check-doc-contract` | CONTRACT 里的动作、相位、路由与代码逐个对应 |
-| `check-host` | 宿主能 import、四件套齐全、无 default 导出、patch 行名等于包名 |
+| `check-host` | 宿主能 import、四件套齐全、无 default 导出、patch 行名等于包名、peer 范围逐段带 rc |
 | `check-pack` | 打包清单含必需文件、未混入源码/测试/文档 |
 | `tests` | 116 条单测（逐文件跑，报告落 `test-report.txt`） |
 | `preview-ui` | 浏览器半边三个槽位组件真能被渲染 |
 | `smoke-apply` | 真跑 `apply()`：路由 200、shim 监听、无密钥 401、卸载关端口 |
 | `check-cordis` | 用**真的** Cordis `Context` 装载、卸载后注册全释放 |
 | `check-profile` | profile 里那份已安装副本与源码构建一致（防「改了没生效」） |
+| `verify-live` | **运行中的宿主**里 `/status` 回契约形状、无令牌字段、目录非空、客户端 bundle 在位；并比对「主进程启动时间 vs 插件安装时间」 |
+| `probe-loopback` | **对着运行中的宿主**真发一次网页登录：本地监听、`state` 64hex、错的 state 回 400、对的 state 2ms 内回 HTML、假授权码打到真上游被归类成 `code-expired` |
+
+`--live` 两项在插件没装进任何 profile 的机器上会自动跳过（源码仓库不等于使用者已装）。
+
+### 已经跑通的真机证据（2026-11-10，本机）
+
+```text
+ok   phase=waiting port=61050
+ok   state 64hex ✓ redirect ✓ (http://127.0.0.1:61050/auth/callback)
+ok   错 state → 400 ✓
+ok   对 state 回调 → 200，用时 2ms，页面 460 字节
+ok   换码失败归类 ✓ code=code-expired（上游 授权码已失效（一次性，可能已用过）...）
+```
+
+扫码链路另测（真实上游签发）：`login-qr` → `phase=waiting`、`qrSvg` 16965 字节（57×57 模块）、
+连续轮询保持 `pending` 稳定、`cancel-login` → `phase=cancelled`。
 
 ---
 
@@ -116,11 +134,11 @@ NODE="C:/Users/<you>/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin
 
 | 项 | 状态 | 为什么 |
 | --- | --- | --- |
+| 真人登录后浏览器跳回 127.0.0.1 | **未验证** | 上面 `probe-loopback` 验的是「回调到达之后」的全过程；「浏览器会不会真的跳过来」需要你本人登录一次 |
+| 微信真的扫一次并确认 | **未验证** | 只验到「服务端签发二维码 + 轮询 pending + 取消」；`success` 分支要真手机扫 |
+| 扫码是否给 refresh token | 倾向「没有」 | 参考实现只取 access token |
 | 桌面端 auth.json 真实形态 | 未验证 | 本机没装客户端；结论来自他机实测 + 参考实现代码 |
 | 桌面端写回**不触发**客户端校验 | 未验证 | 需要客户端在场才能观察 |
-| 网页授权回环最后一跳 | 未验证 | 需要真人在浏览器里登录（B2） |
-| 微信扫码 `success` 分支完整响应体 | 未验证 | 需要真微信扫（B5） |
-| 扫码是否给 refresh token | 倾向「没有」 | 参考实现只取 access token |
 | `iam/confirm` 成功时 `xhx_token` 的形态 | 未验证 | 需要合法 IAM token |
 | refresh 能否带 `Authorization` | 冲突未解 | 两份证据互相矛盾，按「不带」实现 |
 | macOS / Linux 凭据路径 | 未验证 | 只在 Windows 真机跑过 |

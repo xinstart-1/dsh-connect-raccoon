@@ -31,6 +31,10 @@ const steps = [
   ['check-cordis', [process.execPath, 'scripts/check-cordis.mjs']],
   // profile 里那份**已安装副本**与源码构建是否一致（file: 依赖可能是拷贝而不是链接）。
   ['check-profile', [process.execPath, 'scripts/check-profile.mjs']],
+  // 运行中的宿主是否真的装起来了。不装插件时跳过（`--live` 强制要求它在跑）。
+  ['verify-live', [process.execPath, 'scripts/verify-live.mjs', ...(process.argv.includes('--live') ? ['--require-live'] : [])]],
+  // 回环回调端到端：只对着**跑起来的**宿主有意义。
+  ...(process.argv.includes('--live') ? [['probe-loopback', [process.execPath, 'scripts/probe-loopback.mjs']]] : []),
 ];
 
 const failures = [];
