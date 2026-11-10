@@ -1,7 +1,7 @@
 # 真机验证清单
 
 > 自动化门禁（`node scripts/gate.mjs`）覆盖了类型、构建、静态自检、文档契约、宿主装载、
-> 打包清单与 107 条单测。**它覆盖不到真机链路**：桌面端凭据、浏览器回环回调、微信扫码
+> 打包清单与 116 条单测。**它覆盖不到真机链路**：桌面端凭据、浏览器回环回调、微信扫码
 > 这三条都需要真人操作上游页面。本文件是那部分的清单。
 >
 > 本机当前状态（2026-11-10）：**未安装小浣熊桌面端**（注册表 / 文件系统 / 进程三处均无证据，
@@ -18,6 +18,16 @@ dsh plugin --profile desktop add link:X:/Agent/deepseek插件/dsh-connect-raccoo
 ```
 
 **必须完全退出 DSH（含托盘）再启动** —— 插件树的变更不热加载。
+
+> ### 两个踩过的坑（2026-11-10 实测）
+>
+> 1. **宿主只在启动时装载插件树**。装完不重启时 `/plugins/dsh-connect-raccoon/status`
+>    一直是 404，而同机已有的插件正常 200 —— 看起来像「插件加载失败」，实际只是没重启。
+>    判断方法：比对 DSH 主进程启动时间与自己装插件的时间（`Get-Process 'DeepSeek Harness'`）。
+> 2. **`file:` 依赖在 pnpm 下可能是拷贝而不是符号链接**。改完 `src/` 重新 `build`
+>    只更新工作区，profile 里那份还是旧的 —— 表现是「重启了但行为没变」。
+>    `node scripts/gate.mjs` 里的 `check-profile` 就是钉住这件事的；它红了就在 profile
+>    目录跑 `pnpm install --force`，或删掉 `node_modules/dsh-connect-raccoon` 再装一次。
 
 启动后确认三件事，缺任何一件就说明没装上：
 
@@ -94,10 +104,11 @@ NODE="C:/Users/<you>/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin
 | `check-doc-contract` | CONTRACT 里的动作、相位、路由与代码逐个对应 |
 | `check-host` | 宿主能 import、四件套齐全、无 default 导出、patch 行名等于包名 |
 | `check-pack` | 打包清单含必需文件、未混入源码/测试/文档 |
-| `tests` | 107 条单测（逐文件跑，报告落 `test-report.txt`） |
+| `tests` | 116 条单测（逐文件跑，报告落 `test-report.txt`） |
 | `preview-ui` | 浏览器半边三个槽位组件真能被渲染 |
 | `smoke-apply` | 真跑 `apply()`：路由 200、shim 监听、无密钥 401、卸载关端口 |
 | `check-cordis` | 用**真的** Cordis `Context` 装载、卸载后注册全释放 |
+| `check-profile` | profile 里那份已安装副本与源码构建一致（防「改了没生效」） |
 
 ---
 
