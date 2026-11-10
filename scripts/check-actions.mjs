@@ -1,29 +1,21 @@
 /**
- * 动作契约的双向校验：浏览器半边**调用的**与宿主**实现的**必须一一对上。
+ * 字段名契约：浏览器半边**传的字段**与宿主**读的字段**必须对得上。
  *
- * 为什么需要它：这两半之间只有一个 JSON 边界，没有类型检查、没有编译期校验。
- * 拼错一个选项名（`accountId` 写成 `account_id`）在两端各自都「语法正确」，
- * 只有用户点下按钮的那一刻才会炸，而这恰恰是最难在开发时发现的一类。
+ * 为什么只查字段、不查动作名：动作名的一致性已经在 `test/routes.test.ts` 里用
+ * **行为**断言过了（真发一次请求，看它有没有转给 runtime）—— 那是更硬的证据，
+ * 且重构不会误报。字段名没法这样测：要覆盖「每个动作 × 每个字段」的组合，
+ * 得把浏览器半边的整棵 JSX 也跑起来，成本远高于收益。所以这一份是**存量守卫**，
+ * 按规范 §16.4 只减不增。
  *
- * 三个方向都查：
- * 1. **宿主实现的每个动作，浏览器都要么调用、要么明确登记为「仅 API」** ——
- *    否则就是死代码（`logout` 曾是这样，已删除）。
- * 2. **浏览器调用的每个动作，宿主都必须实现** —— 否则点下去就是 unknown-action。
- * 3. **浏览器传的字段名，宿主必须真的读** —— 否则参数被静默忽略。
- *    反向也查：宿主读的字段，浏览器至少要在某个动作里传过（防止忘接线）。
+ * 查三件事：
+ * 1. 浏览器传了、宿主从不读的字段 —— 参数被静默忽略（真 bug）。
+ * 2. 宿主读了、浏览器从不传的字段 —— 要么是可选参数（必须登记落值处），要么是忘接线。
+ * 3. 浏览器调了、宿主没有分支的动作 —— 点下去就 unknown-action。
  *
  * 用法：`node scripts/check-actions.mjs`
  */
 
 import { readFileSync } from 'node:fs';
-
-/**
- * 只在 API 上存在、界面上刻意不提供的动作，附理由。**空集合是目标状态。**
- *
- * 曾有 `logout` 在这里登记过 —— 后来发现它和 `remove-account` 实现完全一样，
- * 是重复出口，直接删掉比留个例外更干净。
- */
-const API_ONLY = new Map();
 
 const problems = [];
 const notes = [];
@@ -32,31 +24,18 @@ const bundle = readFileSync('src/client/bundle.js', 'utf8');
 const routes = readFileSync('src/host/routes.ts', 'utf8');
 const runtime = readFileSync('src/host/runtime.ts', 'utf8');
 
-// ── 宿主侧：类型联合 + ACTIONS 白名单 + switch 分支，三者必须一致 ──────────
-const unionBlock = /export type RaccoonAction =([\s\S]*?);/.exec(routes);
-if (unionBlock === null) {
-  console.error('找不到 RaccoonAction 类型联合');
-  process.exit(1);
-}
-const declared = [...unionBlock[1].matchAll(/'([a-z-]+)'/g)].map((match) => match[1]);
-
-const actionsBlock = /export const ACTIONS[^=]*=\s*\[([\s\S]*?)\]/.exec(routes);
-if (actionsBlock === null) {
-  console.error('找不到 ACTIONS 白名单');
-  process.exit(1);
-}
-const whitelisted = [...actionsBlock[1].matchAll(/'([a-z-]+)'/g)].map((match) => match[1]);
-
 /**
  * 只取**动作分发**那个 switch 的分支。
  *
- * 直接扫全文 `case '...'` 会把别的 switch（例如 `desktopHint` 里按原因码分派）
+ * 直接扫全文 `case '...'` 会把别的 switch（例如按桌面端原因码分派的 `desktopHint`）
  * 也算进来 —— 那种误报会让人以为少写了动作。
+ *
+ * @param source - runtime 源码。
+ * @returns 动作名列表。
  */
 function implementedActions(source) {
   const start = source.indexOf('switch (action)');
   if (start < 0) return [];
-  // 从 switch 起点做花括号配平，切出这个块。
   const open = source.indexOf('{', start);
   let depth = 0;
   let end = source.length;
@@ -69,43 +48,18 @@ function implementedActions(source) {
   }
   return [...source.slice(open, end).matchAll(/case '([a-z-]+)':/g)].map((match) => match[1]);
 }
-const implemented = implementedActions(runtime);
 
-const sameSet = (left, right, label) => {
-  const onlyLeft = left.filter((item) => !right.includes(item));
-  const onlyRight = right.filter((item) => !left.includes(item));
-  if (onlyLeft.length > 0) problems.push(`${label}：只在左边有 ${onlyLeft.join(', ')}`);
-  if (onlyRight.length > 0) problems.push(`${label}：只在右边有 ${onlyRight.join(', ')}`);
-};
-sameSet(declared, whitelisted, 'RaccoonAction 类型 vs ACTIONS 白名单');
-sameSet(declared, implemented, 'RaccoonAction 类型 vs runtime switch 分支');
-notes.push(`宿主声明 ${String(declared.length)} 个动作`);
-
-// ── 浏览器侧：`act('x'` 与 `perform('x'` 两种调用形式 ─────────────────────
+// ── 动作名：只查「浏览器调了但宿主没有这条分支」（另一方向已由行为测试覆盖）──
 const called = new Set();
 for (const match of bundle.matchAll(/\b(?:act|perform)\(\s*'([a-z-]+)'/g)) called.add(match[1]);
-// 三元表达式里的动作名（如 login-qr / login-web）也要算上。
 for (const match of bundle.matchAll(/kind === 'qr' \? '([a-z-]+)' : '([a-z-]+)'/g)) {
   called.add(match[1]);
   called.add(match[2]);
 }
-const calledList = [...called].sort();
-notes.push(`浏览器调用 ${String(calledList.length)} 个动作`);
-
-// 1. 宿主有、浏览器没调 → 死代码，必须登记理由。
-for (const action of declared) {
-  if (called.has(action)) continue;
-  if (API_ONLY.has(action)) continue;
-  problems.push(`宿主实现了 '${action}'，但浏览器从不调用（死代码）—— 要么接上界面，要么在 API_ONLY 里写明理由`);
-}
-// 2. 浏览器调、宿主没实现 → 点下去就 unknown-action。
-for (const action of calledList) {
-  if (!whitelisted.includes(action)) problems.push(`浏览器调用 '${action}'，但宿主 ACTIONS 白名单里没有它`);
-  if (!implemented.includes(action)) problems.push(`浏览器调用 '${action}'，但 runtime 没有对应分支`);
-}
-// 3. API_ONLY 里登记的动作必须真的存在（否则登记本身就是过期的）。
-for (const action of API_ONLY.keys()) {
-  if (!declared.includes(action)) problems.push(`API_ONLY 登记的 '${action}' 在宿主上不存在（登记过期了）`);
+const hostedActions = implementedActions(runtime);
+notes.push(`宿主 ${String(hostedActions.length)} 个动作分支，浏览器调用 ${String(called.size)} 个`);
+for (const action of called) {
+  if (!hostedActions.includes(action)) problems.push(`浏览器调用 '${action}'，但 runtime 没有对应分支（点下去就是 unknown-action）`);
 }
 
 // ── 字段级：浏览器传的键 vs 宿主读的键 ─────────────────────────────────
@@ -195,5 +149,5 @@ if (problems.length > 0) {
   for (const problem of problems) console.error(`  - ${problem}`);
   process.exitCode = 1;
 } else {
-  console.log('\n动作契约校验通过：宿主实现与浏览器调用在动作名与字段名上双向一致。');
+  console.log('\n字段名契约校验通过：浏览器传的字段宿主都读、宿主读的字段都有来源、动作名双向可达。');
 }

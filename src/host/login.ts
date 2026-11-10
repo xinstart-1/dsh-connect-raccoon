@@ -83,6 +83,14 @@ export interface LoginManagerOptions {
   /** 注入时钟与随机源（测试用）。 */
   now?: () => number;
   randomState?: () => string;
+  /**
+   * 用户设定的扫码轮询间隔（毫秒）。留空用上游建议值。
+   *
+   * 为什么要有：上游给的是 2 秒，但有人希望更激进或更省电。这里只作为
+   * **下界候选**参与取大，仍受 {@link QR_POLL_MAX_MS} 与上游建议值约束 ——
+   * 用户填 10 秒不意味着要慢 10 秒，填 100 毫秒也不许把上游打成限流。
+   */
+  pollIntervalMs?: () => number | undefined;
 }
 
 /** 登录管理器。 */
@@ -380,9 +388,10 @@ export function createLoginManager(options: LoginManagerOptions): LoginManager {
         const session = await options.client.startQr();
         const content = options.client.qrContent(session);
         const qrSvg = renderQrSvg(content, { size: 220 });
+        const userInterval = options.pollIntervalMs?.();
         const intervalMs = Math.min(
           QR_POLL_MAX_MS,
-          Math.max(QR_POLL_MIN_MS, session.pollIntervalMs),
+          Math.max(QR_POLL_MIN_MS, session.pollIntervalMs, userInterval ?? 0),
         );
         current = {
           ...current,

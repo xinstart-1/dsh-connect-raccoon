@@ -49,7 +49,13 @@ export interface PluginState {
   composerPill: boolean;
   /** 状态刷新间隔；只能是 {@link POLL_INTERVAL_CHOICES} 之一。 */
   pollIntervalMs: number;
-  /** 每天自动签到（**默认关**：这是会自动改变账号状态的写操作）。 */
+  /**
+   * 每天自动签到（**默认关**：这是会自动改变账号状态的写操作）。
+   *
+   * **尚未接线**：目前只在状态里保存、界面上没有入口、宿主也不会自动触发。
+   * 保留字段是因为签到接口与去重逻辑都已实现，接线只是加一个定时器；
+   * 在那之前它不产生任何行为 —— 不要把它当成「已支持自动签到」。
+   */
   autoCheckin: boolean;
 }
 

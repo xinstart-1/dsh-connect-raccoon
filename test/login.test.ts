@@ -48,7 +48,7 @@ interface Harness {
 }
 
 /** 建一个登录管理器；`validate` 默认通过，`openBrowser` 默认成功。 */
-function harness(client: RaccoonClient, patch: { validateOk?: boolean } = {}): Harness {
+function harness(client: RaccoonClient, patch: { validateOk?: boolean; pollIntervalMs?: () => number } = {}): Harness {
   const saved: StoredAccount[] = [];
   const warned: string[] = [];
   const opened: string[] = [];
@@ -59,6 +59,7 @@ function harness(client: RaccoonClient, patch: { validateOk?: boolean } = {}): H
     validate: async () => patch.validateOk ?? true,
     openBrowser: (url) => { opened.push(url); return true; },
     warn: (message) => { warned.push(message); },
+    ...(patch.pollIntervalMs === undefined ? {} : { pollIntervalMs: patch.pollIntervalMs }),
   });
   return { manager, saved, warned, opened };
 }
@@ -221,4 +222,35 @@ test('dispose：之后 startWeb 不再开端口 → running 为 false、port 为
   assert.equal(login.port, null, `dispose 之后不应占用端口，实际 port=${String(login.port)}`);
   assert.equal(login.url, null, 'dispose 之后不应生成授权页 URL');
   assert.equal(opened.length, 0, 'dispose 之后不应再调 openBrowser');
+});
+
+test('用户设定的轮询间隔真的生效：状态里的值更大时按它轮询，而不是上游建议的 1 秒', async () => {
+  // 这条钉住「设置页的值有没有接线」。实现前它只是个被存下的死字段。
+  let polls = 0;
+  const client = fakeClient({
+    pollQr: async () => { polls += 1; return { status: 'pending' as const }; },
+  });
+  // 上游建议 1 秒；用户设 5 秒 → 取大，5 秒内不应有第二次轮询。
+  const { manager } = harness(client, { pollIntervalMs: () => 5_000 });
+  await manager.startQr();
+  await manager.cancel();
+
+  const before = polls;
+  await new Promise((resolve) => { setTimeout(resolve, 1_500); });
+  assert.equal(polls, before, '用户把间隔设成 5 秒时，1.5 秒内不该再轮询（说明设置没生效）');
+});
+
+test('轮询间隔受下界保护：用户填 100 毫秒也不能把上游打成限流', async () => {
+  let polls = 0;
+  const client = fakeClient({
+    pollQr: async () => { polls += 1; return { status: 'pending' as const }; },
+  });
+  const { manager } = harness(client, { pollIntervalMs: () => 100 });
+  await manager.startQr();
+  await manager.cancel();
+
+  const before = polls;
+  await new Promise((resolve) => { setTimeout(resolve, 700); });
+  // QR_POLL_MIN_MS 是 1000：0.7 秒里不该出现第二次轮询。
+  assert.equal(polls, before, '低于下界的设置必须被夹到 QR_POLL_MIN_MS，否则会限流');
 });

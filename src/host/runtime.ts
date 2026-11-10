@@ -131,6 +131,8 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     warn: options.warn,
     openBrowser: options.openBrowser,
     now,
+    // 状态里的轮询间隔真正生效：此前它只被存下、界面上也没有入口，等于死字段。
+    pollIntervalMs: () => options.state().pollIntervalMs,
     async toAccount(input) {
       const facts = decodeJwtFacts(input.accessToken);
       const refreshFacts = input.refreshToken === '' ? {} : decodeJwtFacts(input.refreshToken);

@@ -256,6 +256,8 @@ NODE="C:/Users/<you>/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin
 - **换号只在请求级发生**：流中途不能换号，长对话撞吞吐墙时只能整轮重失败。
 - **只在 Windows 上真机验证过**；macOS / Linux 的凭据路径按 `os.homedir()` 解析，逻辑相同但未实测。
 - **企业版 / 教育版账号**的签到与「领取」不适用（上游对这类账号的个人权益写接口一律拒绝）。
+- **没有「自动每日签到」**：签到接口与去重都已实现，但定时触发还没接线（`state.autoCheckin`
+  目前只是保留字段，不产生行为）。想签到就手动点一次。
 
 ---
 

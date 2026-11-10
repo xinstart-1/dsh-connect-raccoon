@@ -308,3 +308,94 @@ test('runtime 参数校验：可选 id 数组给了非数组时必须报错，�
   );
   assert.deepEqual(calls, [], '校验失败不该打上游');
 });
+
+test('ACTIONS 名单与 runtime 实际分派一致：名单里的都能跑，不在名单里的一定被拒', async (t) => {
+  // 这是 `check-actions` 那条源码正则守卫的**行为版**：它断言的是「运行时真的会发生什么」，
+  // 而不是「文件里有没有出现某个字符串」—— 重构（改 switch 为查表、拆文件）不会让它变红。
+  const { ACTIONS } = await import('../src/host/routes.ts');
+  assert.ok(Array.isArray(ACTIONS) && ACTIONS.length > 0, 'ACTIONS 不能为空');
+
+  const host = fakeHost();
+  const dispatched: string[] = [];
+  registerRoutes(host.host, {
+    status: async () => ({}),
+    action: async (action) => {
+      dispatched.push(action);
+      return { ok: false };
+    },
+  });
+  const port = await serve(host.handlers, t);
+
+  for (const action of ACTIONS) {
+    dispatched.length = 0;
+    const response = await call(port, {
+      method: 'POST',
+      path: '/plugins/dsh-connect-raccoon/action',
+      body: JSON.stringify({ action }),
+    });
+    assert.equal(response.status, 200, `${action} 是白名单动作，路由应放行`);
+    assert.deepEqual(dispatched, [action], `${action} 必须被原样转给 runtime`);
+  }
+
+  // 名单之外的一律 400，且不转给 runtime（避免拼错的动作被当成「没实现」静默吞掉）。
+  dispatched.length = 0;
+  const rejected = await call(port, {
+    method: 'POST',
+    path: '/plugins/dsh-connect-raccoon/action',
+    body: JSON.stringify({ action: 'not-a-real-action' }),
+  });
+  assert.equal(rejected.status, 400);
+  assert.deepEqual(dispatched, [], '未知动作不该转给 runtime');
+});
+
+test('runtime 对每个 ACTIONS 动作都有分支：传空 body 不该出现「未知动作」', async () => {
+  const { ACTIONS } = await import('../src/host/routes.ts');
+  const { createRuntime } = await import('../src/host/runtime.ts');
+  const emptyState = {
+    accountPoolEnabled: false,
+    enabledAccounts: [],
+    composerPill: true,
+    autoCheckin: false,
+    disabledModels: [],
+    pollIntervalMs: 60000,
+  };
+  const runtime = createRuntime({
+    vault: {
+      rootDir: () => '/tmp/none',
+      list: async () => [],
+      save: async () => undefined,
+      readSelected: async () => undefined,
+      writeSelected: async () => undefined,
+      remove: async () => undefined,
+    },
+    accounts: {
+      probeDesktop: async () => ({ exists: false, detected: false }),
+      adoptDesktop: async () => ({ ok: false, reason: 'desktop-missing' }),
+      usability: () => ({ usable: true }),
+      credits: async () => undefined,
+      accessToken: async () => 'token',
+      markCooldown: () => undefined,
+      cooldownMs: () => 0,
+    },
+    client: { fetchCatalog: async () => ({ models: [], fetchedAtMs: null, source: 'fallback', error: null }) },
+    warn: () => undefined,
+    state: () => emptyState,
+    saveState: async (patch) => ({ ...emptyState, ...patch }),
+    config: () => ({ enabled: true, reuseDesktop: false }),
+  });
+
+  for (const action of ACTIONS) {
+    // 只关心「有没有分支」：参数缺失导致的 bad-request 是预期行为，
+    // 但「未知动作」说明 ACTIONS 里登记了一个 runtime 根本没实现的入口。
+    await runtime.run(action, {}).then(
+      () => undefined,
+      (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        assert.ok(
+          !message.includes('未知动作'),
+          `${action} 在 ACTIONS 白名单里，但 runtime 没有对应分支（${message}）`,
+        );
+      },
+    );
+  }
+});

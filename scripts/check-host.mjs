@@ -7,6 +7,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
@@ -22,6 +23,20 @@ if (!Array.isArray(pkg.dsh?.client?.inject) || pkg.dsh.client.inject.length === 
   problems.push('dsh.client.inject 为空：浏览器半边拿不到任何依赖');
 }
 if (pkg.dsh?.client?.platform !== 'web') problems.push('dsh.client.platform 必须是 web');
+
+// 规则（dsh-plugin-standards §2）：凡写进 dsh.client.inject 的包必须同时在 devDependencies，
+// 否则拿不到类型。更要紧的是它必须在**本包**的 node_modules 里真的能解析 ——
+// 否则装到别人的机器上时，客户端 bundle 引用的那 5 个包一个都找不到。
+for (const dependency of pkg.dsh?.client?.inject ?? []) {
+  if (pkg.devDependencies?.[dependency] === undefined) {
+    problems.push(`dsh.client.inject 里的 ${dependency} 不在 devDependencies（拿不到类型）`);
+  }
+  try {
+    createRequire(import.meta.url).resolve(`${dependency}/package.json`);
+  } catch {
+    problems.push(`dsh.client.inject 里的 ${dependency} 在本包里解析不到（装到别人机器上会缺依赖）`);
+  }
+}
 
 // 2. cordis.patch.yml 的行名必须等于包名（客户端模块靠它定位包）。
 const patch = readFileSync('cordis.patch.yml', 'utf8');

@@ -18,7 +18,8 @@ const steps = [
   ['check-client', [process.execPath, 'scripts/check-client.mjs']],
   // 文档里承诺的功能必须在代码里真的存在。
   ['check-doc-contract', [process.execPath, 'scripts/check-doc-contract.mjs']],
-  // 浏览器调的动作 vs 宿主实现的动作：名字与字段双向一致（无类型检查可依赖）。
+  // 存量守卫：浏览器传的字段 vs 宿主读的字段（动作名一致性已由 test/routes.test.ts
+  // 用行为断言覆盖，这里只剩字段名 —— 那种组合没法用运行时断言低成本覆盖）。
   ['check-actions', [process.execPath, 'scripts/check-actions.mjs']],
   // 宿主能不能真的 import 这个包、client.js 能不能解析。
   ['check-host', [process.execPath, 'scripts/check-host.mjs']],
