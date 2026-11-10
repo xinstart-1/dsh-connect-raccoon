@@ -152,6 +152,10 @@ access token 过期后要重扫 —— 所以它是快路径，不是主线。
     siteOrigin: ''              # 留空用 https://xiaohuanxiong.com
 ```
 
+`siteOrigin` 是**真的**生效的：对话、刷新、换码、扫码、积分五组端点全部由它派生
+（`protocol/client.ts` 的 `endpointsOf`）。改它只有一个正当理由 —— 把上游指到自建代理
+或本地假服务器；后者是 `scripts/probe-pool.mjs` 验证账号池换号的手段。
+
 ---
 
 ## 为什么没有「推理档位」下拉

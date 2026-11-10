@@ -90,7 +90,7 @@ export async function apply(ctx: Context, rawConfig: RaccoonConfig): Promise<voi
 
   const home = dshHome();
   const vault = createVault({ home });
-  const client: RaccoonClient = createRaccoonClient({ warn });
+  const client: RaccoonClient = createRaccoonClient({ warn, siteOrigin: config.siteOrigin });
   const refresher: Refresher = createRefresher({ warn });
   const accountState: { current: PluginState } = { current: await readState({ home }) };
 

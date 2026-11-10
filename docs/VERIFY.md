@@ -110,6 +110,7 @@ NODE="C:/Users/<you>/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin
 | `smoke-apply` | 真跑 `apply()`：路由 200、shim 监听、无密钥 401、卸载关端口 |
 | `check-cordis` | 用**真的** Cordis `Context` 装载、卸载后注册全释放 |
 | `check-profile` | profile 里那份已安装副本与源码构建一致（防「改了没生效」） |
+| `probe-pool` | **账号池 + 自动换号**：真插件 + 真 Cordis + 本地假上游，断言 A(401) → B(200) 的换号序列、第二次请求不再重复烧失败 |
 | `verify-live` | **运行中的宿主**里 `/status` 回契约形状、无令牌字段、目录非空、客户端 bundle 在位；并比对「主进程启动时间 vs 插件安装时间」 |
 | `probe-loopback` | **对着运行中的宿主**真发一次网页登录：本地监听、`state` 64hex、错的 state 回 400、对的 state 2ms 内回 HTML、假授权码打到真上游被归类成 `code-expired` |
 
@@ -128,6 +129,16 @@ ok   换码失败归类 ✓ code=code-expired（上游 授权码已失效（一�
 扫码链路另测（真实上游签发）：`login-qr` → `phase=waiting`、`qrSvg` 16965 字节（57×57 模块）、
 连续轮询保持 `pending` 稳定、`cancel-login` → `phase=cancelled`。
 
+账号池换号（真宿主 + 真 Cordis + 本地假上游，不碰真实账号）：
+
+```text
+ok   假上游 http://127.0.0.1:49161
+ok   临时 DSH_HOME 里 2 个账号，池已开启；A 凭据更新故先被选中，B 作为后备
+ok   shim http://127.0.0.1:49168（地址由插件自己起，密钥长度 43）
+ok   换号 A(401) → B(200) ✓ 上游调用序列 A→B
+ok   第二次请求直接用 B（A 在冷却中，没重复烧失败）✓
+```
+
 ---
 
 ## 已知未验证项（诚实清单）
@@ -135,6 +146,7 @@ ok   换码失败归类 ✓ code=code-expired（上游 授权码已失效（一�
 | 项 | 状态 | 为什么 |
 | --- | --- | --- |
 | 真人登录后浏览器跳回 127.0.0.1 | **未验证** | 上面 `probe-loopback` 验的是「回调到达之后」的全过程；「浏览器会不会真的跳过来」需要你本人登录一次 |
+| 池内换号在**真实**上游上的表现 | 已用本地假上游端到端验过 | 真实上游的限流/失效码与假上游一致（都按 `docs/PROTOCOL.md` 的码表），但真号轮转（尤其 refresh 单次使用）需两个真账号才能观察 |
 | 微信真的扫一次并确认 | **未验证** | 只验到「服务端签发二维码 + 轮询 pending + 取消」；`success` 分支要真手机扫 |
 | 扫码是否给 refresh token | 倾向「没有」 | 参考实现只取 access token |
 | 桌面端 auth.json 真实形态 | 未验证 | 本机没装客户端；结论来自他机实测 + 参考实现代码 |

@@ -9,18 +9,52 @@
  */
 
 import {
-  AUTH_BASE,
   CLIENT_LANGUAGE,
   CLIENT_VERSION,
-  IAM_BASE,
-  LLM_BASE,
-  POINTS_BASE,
   QR_APP_NAME,
   REQUEST_TIMEOUT_MS,
   SITE_ORIGIN,
 } from '../constants.ts';
 import { parseCatalog, type Catalog } from './catalog.ts';
 import { RaccoonError, classifyThrown, classifyUpstream } from './errors.ts';
+
+/**
+ * 一个主站地址派生出的全部端点。
+ *
+ * 单列成函数是为了让 `siteOrigin` 配置真的生效 —— 它此前只写在 schema 里、
+ * 从未参与请求，等于一个「声明了但不起作用」的开关。同时它让测试能把上游
+ * 指向本地假服务器，从而在不碰真实账号的前提下验证账号池与换号。
+ */
+export interface Endpoints {
+  /** 主站 origin，用于 `origin`/`referer` 头与扫码落地页解析。 */
+  site: string;
+  /** OpenAI 兼容的对话网关。 */
+  llm: string;
+  /** 业务鉴权（刷新、换码、账号资料）。 */
+  auth: string;
+  /** IAM（微信小程序扫码）。 */
+  iam: string;
+  /** 积分与账单。 */
+  points: string;
+}
+
+/**
+ * 从主站派生端点。
+ *
+ * @param siteOrigin - 主站 origin；留空用内置的 `https://xiaohuanxiong.com`。
+ * @returns 五个端点前缀（都不带尾斜杠）。
+ */
+export function endpointsOf(siteOrigin?: string): Endpoints {
+  const trimmed = typeof siteOrigin === 'string' ? siteOrigin.trim().replace(/\/+$/, '') : '';
+  const site = trimmed === '' ? SITE_ORIGIN : trimmed;
+  return {
+    site,
+    llm: `${site}/api/web/llm/v2`,
+    auth: `${site}/api/web/auth/v1`,
+    iam: `${site}/api/iam/v1`,
+    points: `${site}/api/web/points/v1`,
+  };
+}
 
 /** 凭据对。 */
 export interface TokenPair {
@@ -67,6 +101,8 @@ export interface RaccoonClientOptions {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   warn?: (message: string) => void;
+  /** 主站 origin；留空用内置地址。测试把它指向本地假服务器。 */
+  siteOrigin?: string;
 }
 
 /** 上游客户端。 */
@@ -92,15 +128,15 @@ export function clientPlatform(): string {
 }
 
 /** 所有业务请求共用的身份头。 */
-function identityHeaders(token?: string): Record<string, string> {
+function identityHeaders(site: string, token?: string): Record<string, string> {
   return {
     accept: 'application/json',
     'x-raccoon-language': CLIENT_LANGUAGE,
     'x-client-platform': clientPlatform(),
     'x-client-version': CLIENT_VERSION,
     'x-org-code': '',
-    origin: SITE_ORIGIN,
-    referer: `${SITE_ORIGIN}/`,
+    origin: site,
+    referer: `${site}/`,
     ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
   };
 }
@@ -137,6 +173,7 @@ function num(value: unknown): number | undefined {
 export function createRaccoonClient(options: RaccoonClientOptions = {}): RaccoonClient {
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  const endpoints = endpointsOf(options.siteOrigin);
 
   /** 发一次请求并返回 `Response`；网络层失败归一成 RaccoonError。 */
   const send = async (input: {
@@ -186,20 +223,20 @@ export function createRaccoonClient(options: RaccoonClientOptions = {}): Raccoon
 
   return {
     async fetchCatalog(accessToken, signal) {
-      const payload = await json({ url: `${LLM_BASE}/model_catalog`, headers: identityHeaders(accessToken), ...(signal === undefined ? {} : { signal }) });
+      const payload = await json({ url: `${endpoints.llm}/model_catalog`, headers: identityHeaders(endpoints.site, accessToken), ...(signal === undefined ? {} : { signal }) });
       return parseCatalog(payload);
     },
 
     async fetchBalance(accessToken, signal) {
-      const payload = await json({ url: `${POINTS_BASE}/balance`, headers: identityHeaders(accessToken), ...(signal === undefined ? {} : { signal }) });
+      const payload = await json({ url: `${endpoints.points}/balance`, headers: identityHeaders(endpoints.site, accessToken), ...(signal === undefined ? {} : { signal }) });
       return parseBalance(payload);
     },
 
     async chatStream(input) {
       const response = await send({
-        url: `${LLM_BASE}/chat/completions`,
+        url: `${endpoints.llm}/chat/completions`,
         method: 'POST',
-        headers: identityHeaders(input.accessToken),
+        headers: identityHeaders(endpoints.site, input.accessToken),
         body: input.body,
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
@@ -216,20 +253,20 @@ export function createRaccoonClient(options: RaccoonClientOptions = {}): Raccoon
 
     async startQr() {
       const payload = await json({
-        url: `${IAM_BASE}/auth/mp/qrcode`,
+        url: `${endpoints.iam}/auth/mp/qrcode`,
         method: 'POST',
-        headers: identityHeaders(),
+        headers: identityHeaders(endpoints.site),
         body: {},
       });
-      return parseQrSession(payload);
+      return parseQrSession(payload, options.siteOrigin);
     },
 
     async pollQr(code) {
-      return await pollQrOnce((input) => json(input), code);
+      return await pollQrOnce((input) => json(input), code, endpoints);
     },
 
     qrContent(session) {
-      const url = new URL(session.scanPath, SITE_ORIGIN);
+      const url = new URL(session.scanPath, endpoints.site);
       url.search = '';
       url.searchParams.set('code', session.code);
       url.searchParams.set('appname', QR_APP_NAME);
@@ -239,16 +276,16 @@ export function createRaccoonClient(options: RaccoonClientOptions = {}): Raccoon
 
     async exchangeAuthorizationCode(code) {
       const payload = await json({
-        url: `${AUTH_BASE}/login_with_authorization_code`,
+        url: `${endpoints.auth}/login_with_authorization_code`,
         method: 'POST',
-        headers: identityHeaders(),
+        headers: identityHeaders(endpoints.site),
         body: { authorization_code: code },
       });
       return parseTokenPair(payload);
     },
 
     async fetchUserInfo(accessToken) {
-      const payload = await json({ url: `${AUTH_BASE}/user_info`, headers: identityHeaders(accessToken) });
+      const payload = await json({ url: `${endpoints.auth}/user_info`, headers: identityHeaders(endpoints.site, accessToken) });
       const data = obj(obj(payload)?.['data']) ?? obj(payload) ?? {};
       const name = str(data['name']) ?? str(data['nickname']);
       const ownerType = str(data['owner_type']);
@@ -264,9 +301,9 @@ export function createRaccoonClient(options: RaccoonClientOptions = {}): Raccoon
     async confirmIamSession(accessToken) {
       try {
         const response = await send({
-          url: `${AUTH_BASE}/iam/confirm`,
+          url: `${endpoints.auth}/iam/confirm`,
           method: 'POST',
-          headers: identityHeaders(accessToken),
+          headers: identityHeaders(endpoints.site, accessToken),
           body: {},
         });
         const headers = response.headers as Headers & { getSetCookie?: () => string[] };
@@ -281,11 +318,11 @@ export function createRaccoonClient(options: RaccoonClientOptions = {}): Raccoon
     },
 
     async settingInfo(accessToken) {
-      return await json({ url: `${SITE_ORIGIN}/api/web/office/v3/setting_info`, headers: identityHeaders(accessToken) });
+      return await json({ url: `${endpoints.site}/api/web/office/v3/setting_info`, headers: identityHeaders(endpoints.site, accessToken) });
     },
 
     async fetchBills(accessToken) {
-      return await json({ url: `${POINTS_BASE}/bills`, headers: identityHeaders(accessToken) });
+      return await json({ url: `${endpoints.points}/bills`, headers: identityHeaders(endpoints.site, accessToken) });
     },
   };
 }
@@ -324,7 +361,7 @@ export function parseBalance(payload: unknown): Balance {
 }
 
 /** 解析扫码会话；`scan_path` 必须通过同源校验。 */
-export function parseQrSession(payload: unknown): QrSession {
+export function parseQrSession(payload: unknown, siteOrigin?: string): QrSession {
   const data = obj(obj(payload)?.['data']) ?? obj(payload) ?? {};
   const code = str(data['qrcode_code']);
   const scanPath = str(data['scan_path']);
@@ -333,17 +370,19 @@ export function parseQrSession(payload: unknown): QrSession {
   if (code === undefined || scanPath === undefined || expiresInSec === undefined || expiresInSec <= 0 || expiresInSec > 3600) {
     throw new RaccoonError({ code: 'invalid-response', message: '小浣熊登录服务返回的二维码信息不完整' });
   }
-  assertSameOriginPath(scanPath);
+  assertSameOriginPath(scanPath, endpointsOf(siteOrigin).site);
   return { code, scanPath, expiresInSec, pollIntervalMs };
 }
 
 /** 服务端给的落地路径必须是本站内的一条相对路径。 */
-function assertSameOriginPath(scanPath: string): void {
+function assertSameOriginPath(scanPath: string, site: string): void {
   if (!scanPath.startsWith('/') || scanPath.startsWith('//') || /[\\\s#]/.test(scanPath)) {
     throw new RaccoonError({ code: 'invalid-response', message: '小浣熊返回了无效的扫码地址' });
   }
-  const url = new URL(scanPath, SITE_ORIGIN);
-  if (url.protocol !== 'https:' || url.origin !== SITE_ORIGIN || url.hash !== '') {
+  const url = new URL(scanPath, site);
+  // 本地测试服务器是 http://127.0.0.1，其余场景仍要求 https 同源。
+  const expectedProtocol = site.startsWith('https:') ? 'https:' : 'http:';
+  if (url.protocol !== expectedProtocol || url.origin !== new URL(site).origin || url.hash !== '') {
     throw new RaccoonError({ code: 'invalid-response', message: '小浣熊返回了无效的扫码地址' });
   }
 }
@@ -352,11 +391,12 @@ function assertSameOriginPath(scanPath: string): void {
 function pollQrOnce(
   call: (input: { url: string; method: string; headers: Record<string, string>; body: unknown }) => Promise<unknown>,
   code: string,
+  endpoints: Endpoints,
 ): Promise<QrPoll> {
   return call({
-    url: `${IAM_BASE}/auth/mp/qrcode/login`,
+    url: `${endpoints.iam}/auth/mp/qrcode/login`,
     method: 'POST',
-    headers: identityHeaders(),
+    headers: identityHeaders(endpoints.site),
     body: { qrcode_code: code },
   }).then(
     (payload): QrPoll => {
