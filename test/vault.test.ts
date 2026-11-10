@@ -174,3 +174,25 @@ test('目录只建在 $DSH_HOME 下：传入 home 临时目录 → rootDir() 以
   // 建仓库本身不产生磁盘写入；save 之后才出现在 vault 根下。
   await assert.rejects(readFile(root, 'utf8'), 'rootDir() 只是一个路径，不应在创建时被写成文件');
 });
+
+test('凭据文件权限：落盘带 mode 0o600（Windows 上无法体现，明确跳过而不是假装通过）', async (t) => {
+  // 这些文件里有 access_token 与 refresh_token 明文。权限放宽等于把登录态
+  // 交给同机所有用户 —— 这类问题不会有任何报错，只能靠断言钉住。
+  //
+  // 实测：Windows 上 `writeFile(..., { mode })` 被**完全忽略**，落盘总是 666，
+  // 所以在那上面断言 mode 没有任何意义。与其让这条测试在 Windows 上「通过」
+  // （那是假的），不如明确跳过并写清原因 —— 变异测试正是靠这一点发现
+  // 「测试一直绿但其实没测」的问题。
+  if (process.platform === 'win32') {
+    t.skip('Windows 忽略 POSIX mode（实测落盘恒为 666）；权限验证需在 Unix 上做');
+    return;
+  }
+  const home = await temporaryHome(t);
+  const vault = createVault({ home });
+  const record = account('key-mode');
+  await vault.save(record);
+
+  const { stat } = await import('node:fs/promises');
+  const info = await stat(join(home, VAULT_DIRNAME, 'accounts', `${record.id}.json`));
+  assert.equal(info.mode & 0o777, 0o600, `凭据文件权限应为 0600，实际 ${(info.mode & 0o777).toString(8)}`);
+});

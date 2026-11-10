@@ -57,17 +57,29 @@ export interface PluginState {
    * 在那之前它不产生任何行为 —— 不要把它当成「已支持自动签到」。
    */
   autoCheckin: boolean;
+  /**
+   * 是否在模型列表里展示上游标记为不可见的模型。
+   *
+   * **默认关**：那些模型（`raccoon-*` 系列）实测能正常对话、照常扣积分，
+   * 但上游给了 `visible:false` —— 随时可能改名或下线。日常使用不该被这种
+   * 不稳定的模型干扰；需要试的人自己打开，并知道它可能明天就没了。
+   */
+  showHiddenModels: boolean;
 }
+
+/** 当前状态格式版本；升版必须提供相邻迁移，见 {@link normalizeState}。 */
+export const STATE_SCHEMA_VERSION = 1;
 
 /** 缺省状态。 */
 export const DEFAULT_STATE: PluginState = Object.freeze({
-  schemaVersion: 1,
+  schemaVersion: STATE_SCHEMA_VERSION,
   disabledModels: [],
   accountPoolEnabled: false,
   enabledAccounts: [],
   composerPill: true,
   pollIntervalMs: 60_000,
   autoCheckin: false,
+  showHiddenModels: false,
 }) as PluginState;
 
 /** 状态文件路径。 */
@@ -83,23 +95,40 @@ export function dshHome(env: NodeJS.ProcessEnv = process.env): string {
     : join(homedir(), '.dsh');
 }
 
-/** 把任意输入收敛成合法状态；非法字段回落到默认值而不是抛错。 */
+/**
+ * 把任意输入收敛成合法状态；非法字段回落到默认值而不是抛错。
+ *
+ * **未来版本一律拒绝**：读到 `schemaVersion` 比当前大时返回默认值，而不是
+ * 按当前格式解释。原因：新版本可能给同一个字段换了语义（`pollIntervalMs`
+ * 从毫秒变秒、`enabledAccounts` 从 id 变 key），按旧格式读会得到「语法合法、
+ * 语义错误」的状态并原样写回，把用户真正的设置覆盖掉。回落到默认值只丢设置，
+ * 不会写坏数据。
+ *
+ * @param raw - 从磁盘读到的任意值。
+ * @returns 可安全使用的状态。
+ */
 export function normalizeState(raw: unknown): PluginState {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return { ...DEFAULT_STATE };
   const record = raw as Record<string, unknown>;
+  const version = record['schemaVersion'];
+  if (typeof version === 'number' && Number.isFinite(version) && version > STATE_SCHEMA_VERSION) {
+    // 不打印日志：这一层是纯函数，日志由调用方按需决定。
+    return { ...DEFAULT_STATE };
+  }
   const strings = (value: unknown): string[] =>
     Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
   const bool = (value: unknown, fallback: boolean): boolean =>
     typeof value === 'boolean' ? value : fallback;
   const poll = typeof record['pollIntervalMs'] === 'number' ? record['pollIntervalMs'] : 0;
   return {
-    schemaVersion: 1,
+    schemaVersion: STATE_SCHEMA_VERSION,
     disabledModels: strings(record['disabledModels']),
     accountPoolEnabled: bool(record['accountPoolEnabled'], DEFAULT_STATE.accountPoolEnabled),
     enabledAccounts: strings(record['enabledAccounts']),
     composerPill: bool(record['composerPill'], DEFAULT_STATE.composerPill),
     pollIntervalMs: POLL_INTERVAL_CHOICES.includes(poll) ? poll : DEFAULT_STATE.pollIntervalMs,
     autoCheckin: bool(record['autoCheckin'], DEFAULT_STATE.autoCheckin),
+    showHiddenModels: bool(record['showHiddenModels'], DEFAULT_STATE.showHiddenModels),
   };
 }
 

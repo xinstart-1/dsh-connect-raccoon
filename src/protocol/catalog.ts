@@ -29,6 +29,18 @@ export interface CatalogModel {
   promo?: string;
   /** 认不认 `reasoning_effort`（上游目录没有结构化声明，这里恒为 false）。 */
   reasoning: boolean;
+  /**
+   * 上游把它标记为不可见（`visible: false`）。
+   *
+   * 这类模型**实测能正常对话且照常计费**（2026-11-10 核对：`raccoon-*` 系列
+   * 全部返回 200 并生成真实回复，`billing_category` 是 `normal`）。
+   * 上游却在目录里给了 `visible: false` —— 它们像未公开的测试通道：
+   * 能用，但随时可能改名或下线。
+   *
+   * 因此**默认不展示**（用户不该在日常使用里撞上一个明天就消失的模型），
+   * 但保留在目录里，由设置项 `showHiddenModels` 决定要不要露出来。
+   */
+  hidden: boolean;
 }
 
 /** 目录快照。 */
@@ -119,16 +131,65 @@ function obj(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-/** 判一个 id 是否命中表（允许上游带前缀/后缀变体）。 */
-function hits(id: string, table: readonly string[]): boolean {
-  const lower = id.toLowerCase();
-  return table.some((entry) => lower === entry || lower.startsWith(`${entry}-`) || lower.includes(entry));
+/**
+ * 归一化模型 id 以便比对。
+ *
+ * 上游同一族模型的写法不统一：`sn-sensenova-6-8-flash` 用连字符、
+ * 目录表里写 `sensenova-6.8-flash-lite` 用点。归一把 `.`/`_` 折成 `-`，
+ * 并剥掉已知的渠道前缀，之后才谈「是不是同一个模型」。
+ *
+ * @param id - 上游 model_name。
+ * @returns 归一后的 id。
+ */
+function normalizeModelId(id: string): string {
+  return id
+    .toLowerCase()
+    .replace(/[._]/g, '-')
+    .replace(/^sn-/, '')
+    .replace(/^raccoon-/, '');
+}
+
+/**
+ * 精确匹配（归一后完全相等）。
+ *
+ * **拒绝表必须用它**：`glm-5-3` 与 `glm-5-3-flash` 是两个模型，
+ * 前者实测不能读图、后者实测能。用「包含」或「前缀」判，
+ * `glm-5-3-flash` 会被 `glm-5-3` 一起否掉 —— 一个能用的功能被静默关掉。
+ *
+ * @param id - 上游 model_name。
+ * @param table - 实测表。
+ * @returns 命中为 true。
+ */
+function matchesExactly(id: string, table: readonly string[]): boolean {
+  const normalized = normalizeModelId(id);
+  return table.some((entry) => normalizeModelId(entry) === normalized);
+}
+
+/**
+ * 前缀匹配（归一后相等，或 id 以 `entry-` 开头）。
+ *
+ * **允许表用得着它**：上游常给同一族模型加日期/版本后缀
+ * （`sn-deepseek-v4-1-flash-1017` 对应表里的 `deepseek-v4.1-flash`）。
+ * 允许表宽松一点是安全的 —— 真正决定要不要接受图片的是拒绝表。
+ *
+ * @param id - 上游 model_name。
+ * @param table - 实测表。
+ * @returns 命中为 true。
+ */
+function matchesPrefix(id: string, table: readonly string[]): boolean {
+  const normalized = normalizeModelId(id);
+  return table.some((entry) => {
+    const candidate = normalizeModelId(entry);
+    return normalized === candidate || normalized.startsWith(`${candidate}-`);
+  });
 }
 
 /** 按实测表 + `tags` 判定识图能力。 */
 export function decideVision(id: string, tags: readonly string[]): boolean {
-  if (hits(id, MEASURED_TEXT_ONLY)) return false;
-  if (hits(id, MEASURED_VISION)) return true;
+  // 拒绝表精确：误伤会关掉一个真能用的功能，而且用户看不出来为什么。
+  if (matchesExactly(id, MEASURED_TEXT_ONLY)) return false;
+  // 允许表可前缀：上游的日期/版本后缀不影响同族结论。
+  if (matchesPrefix(id, MEASURED_VISION)) return true;
   return tags.some((tag) => tag.toLowerCase() === 'vision');
 }
 
@@ -156,7 +217,9 @@ function parseRow(raw: unknown): CatalogModel | undefined {
   if (row === undefined) return undefined;
   const id = str(row['model_name']) ?? str(row['name']);
   if (id === undefined) return undefined;
-  if (row['visible'] === false) return undefined;
+  // 不再丢弃：`visible:false` 的模型实测可用（见 CatalogModel.hidden 的说明），
+  // 丢弃等于替用户决定「你不该用」，而用户可能正是要那个通道。
+  const hidden = row['visible'] === false;
   const tags = Array.isArray(row['tags'])
     ? row['tags'].filter((tag): tag is string => typeof tag === 'string')
     : [];
@@ -173,6 +236,7 @@ function parseRow(raw: unknown): CatalogModel | undefined {
     multiplier: multiplierOf(row),
     ...(promo === undefined ? {} : { promo }),
     reasoning: false,
+    hidden,
   };
 }
 
@@ -226,8 +290,23 @@ export function parseCatalog(payload: unknown, now: number = Date.now()): Catalo
   return { models, fetchedAtMs: now, source: 'live' };
 }
 
-/** 按禁用名单过滤目录（过滤发生在出口，选择器读不到就不会出现）。 */
-export function visibleModels(models: readonly CatalogModel[], disabled: readonly string[]): CatalogModel[] {
+/**
+ * 按禁用名单与「是否展示隐藏模型」过滤目录。
+ *
+ * 过滤发生在出口：选择器读不到就不会出现。两个条件相互独立 ——
+ * 用户勾掉的模型即便上游可见也不给；上游隐藏的模型除非用户明确开启否则不给。
+ *
+ * @param models - 完整目录。
+ * @param disabled - 用户勾掉的模型 id。
+ * @param options.showHidden - 是否连上游标记为不可见的模型一起给出。
+ * @returns 该给选择器的模型列表。
+ */
+export function visibleModels(
+  models: readonly CatalogModel[],
+  disabled: readonly string[],
+  options: { showHidden?: boolean } = {},
+): CatalogModel[] {
   const off = new Set(disabled);
-  return models.filter((model) => !off.has(model.id));
+  const showHidden = options.showHidden === true;
+  return models.filter((model) => (showHidden || !model.hidden) && !off.has(model.id));
 }

@@ -83,3 +83,43 @@ test('writeState：写盘结果 → 文件是合法 JSON 且 schemaVersion 为 1
   assert.equal(record['pollIntervalMs'], 300_000, '合法刷新间隔应原样落盘');
   assert.match(text, /\n$/, '状态文件应以换行结尾（便于人读与 diff）');
 });
+
+test('未来版本的状态文件 → 回落到默认值，不按当前格式解释', async (t) => {
+  // 升版时新版本可能给同名字段换了语义（毫秒变秒、id 变 key）。
+  // 按旧格式读会得到「语法合法、语义错误」的状态并原样写回，
+  // 把用户真正的设置覆盖掉。回落到默认值只丢设置，不会写坏数据。
+  const home = await freshHome(t);
+  await writeFile(
+    join(home, STATE_FILENAME),
+    JSON.stringify({
+      schemaVersion: 99,
+      accountPoolEnabled: true,
+      enabledAccounts: ['acc_future'],
+      pollIntervalMs: 5, // 未来版本里可能是「5 秒」而不是「5 毫秒」
+      autoCheckin: true,
+    }),
+    'utf8',
+  );
+
+  const state = await readState({ home });
+  assert.equal(state.schemaVersion, 1, '读回的状态应标成当前版本');
+  assert.equal(state.accountPoolEnabled, false, '未来版本的数据不该被当成当前格式采纳');
+  assert.deepEqual(state.enabledAccounts, []);
+  assert.equal(state.autoCheckin, false, '未来版本的开关不该被继承（可能已经换了语义）');
+});
+
+test('旧版本（版本号更小或缺省）的状态文件 → 仍正常读取并补齐字段', async (t) => {
+  // 旧数据要能读：用户升级插件后不该丢设置。
+  const home = await freshHome(t);
+  await writeFile(
+    join(home, STATE_FILENAME),
+    JSON.stringify({ schemaVersion: 0, accountPoolEnabled: true, enabledAccounts: ['acc_old'] }),
+    'utf8',
+  );
+
+  const state = await readState({ home });
+  assert.equal(state.schemaVersion, 1, '应标成当前版本');
+  assert.equal(state.accountPoolEnabled, true, '旧版本的设置要保留');
+  assert.deepEqual(state.enabledAccounts, ['acc_old']);
+  assert.equal(state.composerPill, true, '缺省字段由默认值补齐');
+});

@@ -40,7 +40,18 @@ export interface PoolChoice {
   reason: string;
 }
 
-/** 逐个候选排序；返回新数组，不改输入。 */
+/**
+ * 逐个候选排序；返回新数组，不改输入。
+ *
+ * 注意：两个调用方（{@link pickAccount} 与 {@link failoverCandidates}）都**先过滤掉不可用**，
+ * 所以第一条比较键在当前调用图里走不到。仍然保留它是有意的 —— `rank` 是纯函数，
+ * 将来若有调用方直接传全量候选，「不可用排最后」这个不变量应当自动成立，
+ * 而不是要那个人再读一遍调用方代码。**不要**把它当成当前的可用性防线。
+ *
+ * @param candidates - 候选账号（可含不可用的）。
+ * @param nowMs - 当前时间，用于「30 天内到期」判定。
+ * @returns 排序后的新数组。
+ */
 function rank(candidates: readonly PoolCandidate[], nowMs: number): PoolCandidate[] {
   return [...candidates].sort((left, right) => {
     if (left.usable !== right.usable) return left.usable ? -1 : 1;

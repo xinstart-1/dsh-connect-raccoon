@@ -11,7 +11,7 @@
  * - **花钱的动作不碰**：`checkin` / `test-account` 会真实消耗积分，只在有账号时才试一次，
  *   且 `checkin` 默认跳过（签到是每日一次，重复调没有意义）。
  *
- * 用法：`node scripts/probe-actions.mjs [--url http://127.0.0.1:59224] [--with-checkin]`
+ * 用法：`node scripts/probe-actions.mjs [--url http://127.0.0.1:49204] [--with-checkin]`
  */
 
 import { readFileSync, statSync } from 'node:fs';
@@ -24,7 +24,7 @@ const pkg = JSON.parse(readFileSync(resolve('package.json'), 'utf8'));
 const args = process.argv.slice(2);
 const urlArg = args.includes('--url') ? args[args.indexOf('--url') + 1] : undefined;
 const withCheckin = args.includes('--with-checkin');
-const base = (urlArg ?? process.env['DSH_GUI_URL'] ?? 'http://127.0.0.1:59224').replace(/\/+$/, '');
+const base = (urlArg ?? process.env['DSH_GUI_URL'] ?? 'http://127.0.0.1:49204').replace(/\/+$/, '');
 const ACTION = `${base}/plugins/${pkg.name}/action`;
 const STATUS = `${base}/plugins/${pkg.name}/status`;
 

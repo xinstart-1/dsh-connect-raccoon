@@ -259,6 +259,9 @@ NODE="C:/Users/<you>/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin
 - **企业版 / 教育版账号**的签到与「领取」不适用（上游对这类账号的个人权益写接口一律拒绝）。
 - **没有「自动每日签到」**：签到接口与去重都已实现，但定时触发还没接线（`state.autoCheckin`
   目前只是保留字段，不产生行为）。想签到就手动点一次。
+- **Windows 上凭据文件权限不受 `mode` 控制**：插件以 `0600` 写入仓库文件，Unix 上生效；
+  Windows 会忽略 POSIX mode（实测落盘恒为 666），只能靠 `%USERPROFILE%` 的目录 ACL 保护。
+  这一点在 `docs/VERIFY.md` 有实测记录，不要以为「设了 0600 就安全」。
 - **工具调用只验到「透传」层**：`tools` / `tool_calls` 在插件内部原样进出（有测试与探针），
   但「pi-ai 是否真把工具放进请求」没有自动化验证，需要一次带工具的对话才能确认。
   在这一条被真机确认前，请不要把它当成「工具调用已验证可用」。

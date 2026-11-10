@@ -92,7 +92,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
   const setCatalog = (next: Catalog, error: string | null): void => {
     catalog = next;
     catalogError = error;
-    options.onCatalog?.(visibleModels(next.models, options.state().disabledModels));
+    options.onCatalog?.(visibleModels(next.models, options.state().disabledModels, { showHidden: options.state().showHiddenModels }));
   };
 
   /** 拉一次目录；失败保留旧目录并记下原因（绝不清空）。 */
@@ -231,7 +231,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
         source: catalog.source,
         fetchedAtMs: catalog.fetchedAtMs === 0 ? null : catalog.fetchedAtMs,
         error: catalogError,
-        models: visibleModels(catalog.models, state.disabledModels),
+        models: visibleModels(catalog.models, state.disabledModels, { showHidden: state.showHiddenModels }),
       },
       login: login.view(),
       checkin: lastCheckin,
@@ -290,7 +290,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
 
   return {
     login,
-    catalog: () => visibleModels(catalog.models, options.state().disabledModels),
+    catalog: () => visibleModels(catalog.models, options.state().disabledModels, { showHidden: options.state().showHiddenModels }),
 
     async status() {
       // 状态读得快：目录过期时才在后台刷新，不阻塞这一次响应。
@@ -390,11 +390,12 @@ export function createRuntime(options: RuntimeOptions): Runtime {
           if (typeof record['composerPill'] === 'boolean') allowed.composerPill = record['composerPill'];
           if (typeof record['pollIntervalMs'] === 'number') allowed.pollIntervalMs = record['pollIntervalMs'];
           if (typeof record['autoCheckin'] === 'boolean') allowed.autoCheckin = record['autoCheckin'];
+          if (typeof record['showHiddenModels'] === 'boolean') allowed.showHiddenModels = record['showHiddenModels'];
           if (Array.isArray(record['enabledAccounts'])) {
             allowed.enabledAccounts = record['enabledAccounts'].filter((item): item is string => typeof item === 'string');
           }
           const next = await options.saveState(allowed);
-          options.onCatalog?.(visibleModels(catalog.models, next.disabledModels));
+          options.onCatalog?.(visibleModels(catalog.models, next.disabledModels, { showHidden: next.showHiddenModels }));
           return { ok: true, status: await buildStatusDocument() };
         }
 

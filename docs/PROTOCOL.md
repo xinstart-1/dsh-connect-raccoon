@@ -1448,3 +1448,28 @@ grep -o "desktop_callback\|loopback\|127\.0\.0\.1" page-*.js
 ```
 
 > 前端 chunk 文件名带 content hash，**上游改版后会变**。重新从 `work.html` / `/authorize?...` 的 HTML 里抓 `_next/static/chunks/...` 列表，不要硬编码上面的 hash。
+
+---
+
+## 模型目录：`visible:false` 的模型实测可用（2026-11-10 核对）
+
+拿真实令牌打 `GET /api/web/llm/v2/model_catalog`，上游给 9 行，其中 3 行 `visible: false`：
+
+| model_name | description | ability_level | billing | 实测对话 |
+| --- | --- | --- | --- | --- |
+| `raccoon-090dd3` | Raccoon-Work | 3 | normal ×1 | 200 |
+| `raccoon-19b265` | Raccoon-Work-260817-A | 3 | normal ×1 | 200 |
+| `raccoon-405a1c` | Raccoon-Work-260817-B | 2 | normal ×1 | 200 |
+
+**它们不是占位符**：`POST /chat/completions` 返回 200 与真实 content，
+`billing_category` 是 `normal`（照常扣积分），`ability_level` 甚至高于部分可见模型。
+
+上游给 `visible:false` 的意图不明 —— 像未公开的测试通道。插件因此：
+
+- **保留在目录里**（不再丢弃），打 `hidden: true`；
+- **默认不展示**（`state.showHiddenModels` 默认 false），避免用户在日常使用里
+  撞上一个明天可能消失的模型；
+- 用户可在「模型」tab 里打开开关，开关旁写明「上游未公开、随时可能下线」。
+
+同一族 id 的写法不统一（`sn-sensenova-6-8-flash` 用连字符，实测表写
+`sensenova-6.8-flash-lite` 用点），比对前需归一 `.`/`_` → `-` 并剥 `sn-` 前缀。

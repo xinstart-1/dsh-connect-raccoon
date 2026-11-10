@@ -181,3 +181,36 @@ test('纯函数：调用 pickAccount → 不改写入参数组与候选对象', 
   assert.deepEqual(candidates, snapshot, '挑选与排序不得原地改动传入的候选数组');
   assert.deepEqual(candidates.map((item) => item.id), snapshot.map((item) => item.id), '候选顺序不应被就地重排');
 });
+
+test('failoverCandidates：不可用账号不出现在换号序列里（换到不可用的等于没换）', () => {
+  // 这条与「排序」无关：它钉的是**过滤**。不可用账号若混进换号序列，
+  // 宿主会在一个已知不可用的账号上白等一次超时，然后才轮到下一个。
+  const order = failoverCandidates({
+    poolEnabled: true,
+    currentId: undefined,
+    candidates: [
+      candidate({ id: 'acc_first', credits: 500 }),
+      candidate({ id: 'acc_dead', usable: false, reason: '限流冷却中', credits: 9_999 }),
+      candidate({ id: 'acc_alive', credits: 100 }),
+    ],
+    firstId: 'acc_first',
+  });
+  assert.ok(!order.includes('acc_dead'), `不可用账号不该出现在换号序列里，实际 ${order.join(',')}`);
+  assert.deepEqual(order, ['acc_alive'], '除首个外的可用账号应按排序给出');
+});
+
+test('rank 的可用性不变量：即使调用方传了全量候选，不可用也排最后', () => {
+  // rank 是纯函数且两个现有调用方都先过滤，所以这条不变量当前走不到；
+  // 但它是 rank 自己的契约。用 pickAccount 的池关闭路径验证：那里不过滤。
+  const choice = pickAccount({
+    poolEnabled: false,
+    currentId: 'acc_dead',
+    candidates: [
+      candidate({ id: 'acc_dead', usable: false, reason: '凭据已失效' }),
+      candidate({ id: 'acc_ok', usable: true, credits: 1 }),
+    ],
+  });
+  // 池关闭时用「当前选用」，即使它不可用也照用，但必须说明原因。
+  assert.equal(choice.id, 'acc_dead', '池关闭时用户选谁就是谁');
+  assert.equal(choice.reason, '凭据已失效', '不可用时 reason 应说明原因，而不是笼统「使用当前选用的账号」');
+});

@@ -157,6 +157,8 @@
     lastFailoverNone: '还没有发生过自动换号',
 
     modelsHint: '取消勾选的模型不会出现在模型选择器里；至少要保留一个。',
+    showHiddenToggle: '显示上游未公开的模型',
+    showHiddenHint: '这些模型（如 Raccoon-Work 系列）上游标记为不可见，但实测能正常对话、照常扣积分，随时可能改名或下线。默认不显示。',
     modelsEmpty: '目录还是空的，点「刷新」重读一次。',
     modelsSourceLine: '目录来源：{source}',
     modelsCount: '{count} 个模型',
@@ -346,6 +348,8 @@
     lastFailoverNone: 'No automatic failover has happened yet',
 
     modelsHint: 'Unchecked models do not appear in the model picker; keep at least one.',
+    showHiddenToggle: 'Show models the upstream has not published',
+    showHiddenHint: 'These models (e.g. the Raccoon-Work series) are marked invisible upstream but do answer and bill normally; they may be renamed or retired at any time. Hidden by default.',
     modelsEmpty: 'The catalog is empty. Press Refresh to read it again.',
     modelsSourceLine: 'Catalog source: {source}',
     modelsCount: '{count} models',
@@ -1289,6 +1293,11 @@
         var perform = props.perform;
         var catalog = status === undefined ? undefined : status.catalog;
         var models = catalog !== undefined && Array.isArray(catalog.models) ? catalog.models : undefined;
+        // 隐藏模型开关的当前值：从状态里读，读不到按「关」处理（默认不展示未公开模型）。
+        var showHidden =
+          status !== undefined && typeof status === 'object' && status.state !== undefined
+            ? status.state.showHiddenModels === true
+            : false;
 
         /** 勾选/取消：重算禁用名单后整份写回。 */
         function toggle(id, nextOn) {
@@ -1395,6 +1404,24 @@
           React.Fragment,
           null,
           h(Note, null, t('modelsHint')),
+          // 隐藏模型开关：上游标了 visible:false 但实测可用（且照常计费），
+          // 默认不展示；需要试的人自己开，并看到「随时可能下线」的说明。
+          h(
+            'label',
+            { className: 'dsr-check' },
+            h('input', {
+              type: 'checkbox',
+              checked: showHidden === true,
+              disabled: busy || status === undefined,
+              onChange: function (event) {
+                void perform('settings', { patch: { showHiddenModels: event.target.checked } }, function () {
+                  return '';
+                });
+              }
+            }),
+            t('showHiddenToggle')
+          ),
+          h(Note, null, t('showHiddenHint')),
           h(
             Card,
             {

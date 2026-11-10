@@ -5,6 +5,7 @@ import {
   FALLBACK_CATALOG,
   MEASURED_TEXT_ONLY,
   MEASURED_VISION,
+  decideVision,
   parseCatalog,
   visibleModels,
 } from '../src/protocol/catalog.ts';
@@ -56,15 +57,39 @@ test('真实形状解析：{code:0,data:{categories:[{models:[…]}]}} → 一�
   assert.equal(catalog.fetchedAtMs, 1_760_000_000_000, 'fetchedAtMs 应使用注入的抓取时间');
 });
 
-test('隐藏行：目录行带 visible:false → 被跳过，只剩可见模型', () => {
+test('隐藏行：visible:false 的模型**保留在目录里**并打上 hidden 标记', () => {
+  // 2026-11-10 实测：上游标 visible:false 的 `raccoon-*` 系列**能正常对话、照常计费**。
+  // 一律丢弃等于替用户决定「你不该用」，而用户可能正是要那个通道。
+  // 改为保留 + 标记，由 showHiddenModels 决定要不要露出来。
   const catalog = parseCatalog(
     catalogOf([
       { model_name: 'hidden-model', visible: false },
       { model_name: 'shown-model' },
     ]),
   );
-  assert.equal(catalog.models.length, 1, `visible:false 的行不应入选，期望 1 条，实际 ${catalog.models.length} 条`);
-  assert.equal(catalog.models[0]!.id, 'shown-model', `应保留可见的 shown-model，实际 ${catalog.models[0]!.id}`);
+  assert.equal(catalog.models.length, 2, `两条都应保留在目录里，实际 ${catalog.models.length} 条`);
+  const hidden = catalog.models.find((model) => model.id === 'hidden-model');
+  const shown = catalog.models.find((model) => model.id === 'shown-model');
+  assert.equal(hidden?.hidden, true, 'visible:false 的行应标记 hidden');
+  assert.equal(shown?.hidden, false, '普通行 hidden 应为 false');
+});
+
+test('visibleModels：默认不展示隐藏模型，开启后才展示', () => {
+  const models = parseCatalog(catalogOf([
+    { model_name: 'hidden-model', visible: false },
+    { model_name: 'shown-model' },
+  ])).models;
+
+  assert.deepEqual(
+    visibleModels(models, []).map((model) => model.id),
+    ['shown-model'],
+    '默认只给可见模型 —— 上游标了不可见，日常使用不该撞上随时会消失的模型',
+  );
+  assert.deepEqual(
+    visibleModels(models, [], { showHidden: true }).map((model) => model.id),
+    ['hidden-model', 'shown-model'],
+    '用户显式开启后应连隐藏模型一起给出',
+  );
 });
 
 test('同名去重：两条同 model_name 的行 → 只留第一条', () => {
@@ -147,4 +172,24 @@ test('禁用名单：visibleModels → 只过滤命中 id 的条目，其余顺�
     ['glm-5-3', 'deepseek-v4.1-flash'],
     `禁用 kimi-k3 后应剩 glm-5-3 与 deepseek-v4.1-flash，实际 ${JSON.stringify(visible.map((model) => model.id))}`,
   );
+});
+
+test('识图判定：glm-5-3-flash 不能被 glm-5-3 的「不能读图」结论误伤', () => {
+  // 2026-11-10 对着真实上游核对时发现的缺陷：hits() 用「包含」匹配，
+  // `glm-5-3` 把 `sn-glm-5-3-flash` 一起否掉了。
+  // 上游给它打了 vision 标签，实测也能读图 —— 一个能用的功能被静默关掉，
+  // 而且用户在界面上只看到「没有识图图标」，无从判断是模型不支持还是插件判错了。
+  assert.equal(decideVision('sn-glm-5-3-flash', ['fast', 'vision']), true, 'glm-5-3-flash 能读图');
+  assert.equal(decideVision('sn-glm-5-3', ['reasoning']), false, 'glm-5-3 实测不能读图');
+});
+
+test('识图判定：上游 id 用连字符、实测表用点，归一后仍要命中', () => {
+  // 上游叫 sn-sensenova-6-8-flash-lite，表里写 sensenova-6.8-flash-lite。
+  assert.equal(decideVision('sn-sensenova-6-8-flash-lite', []), true);
+  assert.equal(decideVision('sn-deepseek-v4-1-flash-1017', []), true, '4-1 与 4.1 是同一个模型');
+  assert.equal(decideVision('sn-kimi-k3', []), true);
+});
+
+test('识图判定：未知模型无标签 → 保守判为 false（宁可少宣称）', () => {
+  assert.equal(decideVision('brand-new-model-3000', []), false);
 });
