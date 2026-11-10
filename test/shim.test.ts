@@ -215,3 +215,77 @@ test('卸载：端口真的关掉（再连一次失败）', async () => {
   );
   assert.equal(status, 'closed', '卸载后不能再接受请求');
 });
+
+test('工具调用：tools / tool_choice 原样透传给上游，shim 不改写请求体', async (t) => {
+  // DSH 的 agent 能力全靠工具调用。shim 只要动一下请求体，工具就从「能用」变成「永远不调用」，
+  // 而且这种失败是静默的 —— 模型会正常回话，只是永远不调工具。
+  const received: Array<Record<string, unknown>> = [];
+  const shim = await startShim({
+    attempts: async () => [{ accountId: 'acc_a', accessToken: async () => 'token-a' }],
+    chat: async (input) => {
+      received.push(input.body as Record<string, unknown>);
+      return new Response(
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"read_file","arguments":"{\\"p\\":\\"a"}}]}}]}\n\n'
+        + 'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":".txt\\"}"}}]},"finish_reason":"tool_calls"}]}\n\n'
+        + 'data: [DONE]\n\n',
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      );
+    },
+    onWarn: () => undefined,
+  });
+  t.after(async () => { await shim.close(); });
+
+  const tools = [{
+    type: 'function',
+    function: {
+      name: 'read_file',
+      description: '读文件',
+      parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+    },
+  }];
+  const response = await fetch(`${shim.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${shim.token}` },
+    body: JSON.stringify({
+      model: 'sensenova-6.8-flash-lite',
+      messages: [{ role: 'user', content: '读 a.txt' }],
+      tools,
+      tool_choice: 'auto',
+      stream: true,
+    }),
+  });
+  const text = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(received[0]?.['tools'], tools, 'tools 必须原样到达上游（改写会让模型永远不调工具）');
+  assert.equal(received[0]?.['tool_choice'], 'auto', 'tool_choice 必须原样透传');
+  assert.ok(text.includes('tool_calls'), 'tool_calls 分片必须原样转发给宿主');
+  assert.ok(text.includes('read_file'), '工具名不能在转发时丢');
+  assert.ok(text.includes('[DONE]'), 'SSE 结束标记必须保留');
+});
+
+test('非流式请求：上游回 application/json 时按普通响应透传，不当成半截事件流', async (t) => {
+  // stream:false 时上游回一整个 JSON。若转发逻辑假定「一定是 SSE」，
+  // 宿主会收到内容对不上 content-type 的响应，解析报错。
+  const payload = { id: 'x', choices: [{ message: { role: 'assistant', content: '你好' }, finish_reason: 'stop' }] };
+  const shim = await startShim({
+    attempts: async () => [{ accountId: 'acc_a', accessToken: async () => 'token-a' }],
+    chat: async () => new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+    onWarn: () => undefined,
+  });
+  t.after(async () => { await shim.close(); });
+
+  const response = await fetch(`${shim.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${shim.token}` },
+    body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }], stream: false }),
+  });
+  const text = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type') ?? '', /application\/json/, 'content-type 必须跟随上游');
+  assert.deepEqual(JSON.parse(text), payload, '非流式响应体必须逐字保留');
+});

@@ -38,6 +38,8 @@ const steps = [
   ['probe-pool', [process.execPath, 'scripts/probe-pool.mjs']],
   // 桌面端链路：模拟客户端 auth.json → 采纳进池 → 单飞续期 → 写回（保未知字段与键序）。
   ['probe-desktop', [process.execPath, 'scripts/probe-desktop.mjs']],
+  // 工具调用透传：tools / tool_choice 原样到上游、tool_calls 原样回宿主。
+  ['probe-tools', [process.execPath, 'scripts/probe-tools.mjs']],
   // 运行中的宿主是否真的装起来了。不装插件时跳过（`--live` 强制要求它在跑）。
   ['verify-live', [process.execPath, 'scripts/verify-live.mjs', ...(process.argv.includes('--live') ? ['--require-live'] : [])]],
   // 回环回调端到端：只对着**跑起来的**宿主有意义。
