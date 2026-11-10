@@ -17,6 +17,7 @@ import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { RaccoonError } from '../protocol/errors.ts';
+import { findFailureInChunk, isRateLimitedFrame } from '../protocol/sse.ts';
 
 /** shim 启动后的句柄。 */
 export interface ShimHandle {
@@ -148,8 +149,18 @@ export async function startShim(options: ShimOptions): Promise<ShimHandle> {
     });
   });
 
-  /** 把一次上游响应透传下去；从这一刻起不再换号。 */
-  async function relay(response: Response, res: ServerResponse): Promise<void> {
+  /**
+   * 把一次上游响应透传下去；从这一刻起不再换号。
+   *
+   * 但**要认得出流里的错误帧**：上游会把限流藏在 200 响应的
+   * `data: {"error":{"code":"user_model_rate_limited"}}` 里。不认的话，
+   * 这次失败既不会记冷却、也不会告诉宿主，用户只看到回复被截断，
+   * 下一个请求还会再挑同一个账号，白烧一遍。
+   *
+   * 这里只**观察**、不改写：字节原样转发（改写有把正常响应改坏的风险），
+   * 发现错误帧就通过 `onFailover` 报一次「本账号这次失败了、但换不了号」。
+   */
+  async function relay(response: Response, res: ServerResponse, accountId: string): Promise<void> {
     const contentType = response.headers.get('content-type') ?? 'application/json';
     const isEventStream = contentType.includes('text/event-stream');
     res.writeHead(200, {
@@ -162,11 +173,29 @@ export async function startShim(options: ShimOptions): Promise<ShimHandle> {
       return;
     }
     const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let failureReported = false;
     try {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         res.write(value);
+        if (!failureReported && isEventStream && value !== undefined) {
+          const found = findFailureInChunk(decoder.decode(value, { stream: true }));
+          if (found !== undefined) {
+            failureReported = true;
+            // 流已经开始，换不了号；但宿主必须知道「这个账号这次失败了」，
+            // 否则它不会记冷却，下一个请求还会挑到同一个。
+            options.onFailover?.({
+              // from === to：这是「本账号这次没成、但已经没法换号」的上报，
+              // 宿主据此记冷却，而不是真的换了号。
+              fromId: accountId,
+              toId: accountId,
+              reason: found.message ?? found.code ?? '流内错误帧',
+              code: isRateLimitedFrame(found) ? 'rate-limited' : 'upstream-error',
+            });
+          }
+        }
       }
       res.end();
     } catch (error) {
@@ -282,7 +311,7 @@ export async function startShim(options: ShimOptions): Promise<ShimHandle> {
         reportGiveUp(attempt.accountId, nextId, lastError);
         continue;
       }
-      await relay(response, res);
+      await relay(response, res, attempt.accountId);
       return;
     }
 

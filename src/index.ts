@@ -157,7 +157,13 @@ export async function apply(ctx: Context, rawConfig: RaccoonConfig): Promise<voi
     },
     chat: (input) => client.chatStream({ accessToken: input.accessToken, body: input.body, signal: input.signal }),
     onFailover: (detail) => {
-      warn(`自动换号：${detail.fromId} → ${detail.toId}（${detail.code}：${detail.reason}）`);
+      // from === to 不是换号，而是「流已经开始、换不了了，但这个账号这次失败了」
+      // （典型是 200 流里的限流帧）。日志要分开写，否则排查时会去找一个不存在的换号。
+      if (detail.fromId === detail.toId) {
+        warn(`账号 ${detail.fromId} 本次请求失败且无法换号（${detail.code}：${detail.reason}）`);
+      } else {
+        warn(`自动换号：${detail.fromId} → ${detail.toId}（${detail.code}：${detail.reason}）`);
+      }
       // 刚失败过的账号先退出候选池：否则下一个请求又会挑到它，白烧一次失败。
       // 限流与令牌失效要等久一点，其余（5xx / 网络）只压一分钟。
       const ms = detail.code === 'rate-limited' || detail.code === 'authorization-verify'

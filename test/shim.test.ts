@@ -289,3 +289,83 @@ test('非流式请求：上游回 application/json 时按普通响应透传，�
   assert.match(response.headers.get('content-type') ?? '', /application\/json/, 'content-type 必须跟随上游');
   assert.deepEqual(JSON.parse(text), payload, '非流式响应体必须逐字保留');
 });
+
+test('流内错误帧：200 响应里的限流帧被认出来，并上报「这个账号这次失败了」', async (t) => {
+  // 上游把限流藏在 200 流里（HTTP 是成功的、连接正常关闭）。不认这一帧的话：
+  // 不记冷却、不告警，用户只看到回复被截断，下一个请求还会挑同一个账号白烧一遍。
+  const failures: Array<{ fromId: string; toId: string; code: string; reason: string }> = [];
+  const shim = await startShim({
+    attempts: async () => [{ accountId: 'acc_a', accessToken: async () => 'token-a' }],
+    chat: async () => new Response(
+      'data: {"choices":[{"delta":{"content":"半句"}}]}\n\n'
+      + 'data: {"error":{"code":"user_model_rate_limited","message":"频率超限"}}\n\n',
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    ),
+    onFailover: (detail) => { failures.push(detail); },
+    onWarn: () => undefined,
+  });
+  t.after(async () => { await shim.close(); });
+
+  const response = await fetch(`${shim.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${shim.token}` },
+    body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+  });
+  const text = await response.text();
+
+  // 1. 字节必须原样转发（认帧不等于改写流）。
+  assert.ok(text.includes('半句'), '正常内容不能被丢掉');
+  assert.ok(text.includes('user_model_rate_limited'), '错误帧也要原样给宿主，它可能自己会处理');
+
+  // 2. 必须上报，且分类成 rate-limited（决定冷却时长）。
+  assert.equal(failures.length, 1, `应恰好上报一次，实际上报 ${String(failures.length)} 次`);
+  assert.equal(failures[0]?.code, 'rate-limited', '限流帧必须归成 rate-limited，否则冷却算错');
+  assert.equal(failures[0]?.fromId, 'acc_a');
+  assert.equal(failures[0]?.toId, 'acc_a', '流已开始、换不了号，from 与 to 应相等');
+});
+
+test('流内错误帧：正常结束的流不误报', async (t) => {
+  const failures: unknown[] = [];
+  const shim = await startShim({
+    attempts: async () => [{ accountId: 'acc_a', accessToken: async () => 'token-a' }],
+    chat: async () => new Response(
+      'data: {"choices":[{"delta":{"content":"完整回复"}}]}\n\ndata: [DONE]\n\n',
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    ),
+    onFailover: (detail) => { failures.push(detail); },
+    onWarn: () => undefined,
+  });
+  t.after(async () => { await shim.close(); });
+
+  const response = await fetch(`${shim.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${shim.token}` },
+    body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+  });
+  await response.text();
+
+  assert.deepEqual(failures, [], '正常流一次都不该上报换号/失败，否则好账号会被无谓冷却');
+});
+
+test('流内错误帧：非流式 JSON 响应不逐帧扫描（不白花 JSON.parse 的钱）', async (t) => {
+  const failures: unknown[] = [];
+  const shim = await startShim({
+    attempts: async () => [{ accountId: 'acc_a', accessToken: async () => 'token-a' }],
+    chat: async () => new Response(
+      JSON.stringify({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ),
+    onFailover: (detail) => { failures.push(detail); },
+    onWarn: () => undefined,
+  });
+  t.after(async () => { await shim.close(); });
+
+  const response = await fetch(`${shim.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${shim.token}` },
+    body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }], stream: false }),
+  });
+  await response.text();
+
+  assert.deepEqual(failures, []);
+});

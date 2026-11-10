@@ -181,6 +181,7 @@ access token 过期后要重扫 —— 所以它是快路径，不是主线。
 | `src/protocol/errors.ts` | 上游错误归一（稳定 code + 是否换号） |
 | `src/protocol/catalog.ts` | 模型目录解析、兜底目录、识图覆盖表 |
 | `src/protocol/client.ts` | 上游 HTTP 客户端（目录 / 余额 / 对话 / 扫码 / 换码 / 签到） |
+| `src/protocol/sse.ts` | 流内错误帧识别：上游把限流藏在 200 响应的 error 帧里 |
 | `src/protocol/qr.ts` | 零依赖二维码 SVG 编码器 |
 | `src/host/accounts.ts` | 账号生命周期：收号、续期、余额、可用性、冷却 |
 | `src/host/pool.ts` | 池的排序与挑选（纯函数） |
