@@ -325,15 +325,6 @@ export function createRuntime(options: RuntimeOptions): Runtime {
           await login.cancel();
           return { ok: true, login: login.view() };
 
-        case 'login-code': {
-          const text = body['text'];
-          if (typeof text !== 'string' || text.trim() === '') {
-            throw actionError('bad-request', '请粘贴授权码或整条回调地址');
-          }
-          const view: LoginView = await login.submitCode(text);
-          return { ok: view.phase === 'done', login: view };
-        }
-
         case 'adopt-desktop': {
           const probe = desktopProbe ?? (await options.accounts.probeDesktop());
           desktopProbe = probe;

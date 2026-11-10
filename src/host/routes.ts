@@ -22,7 +22,6 @@ export type RaccoonAction =
   | 'login-web'
   | 'login-qr'
   | 'login-status'
-  | 'login-code'
   | 'cancel-login'
   | 'adopt-desktop'
   | 'switch-account'
@@ -40,7 +39,6 @@ export const ACTIONS: readonly RaccoonAction[] = [
   'login-web',
   'login-qr',
   'login-status',
-  'login-code',
   'cancel-login',
   'adopt-desktop',
   'switch-account',

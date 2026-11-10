@@ -98,8 +98,6 @@ export interface LoginManager {
   view(): LoginView;
   startWeb(): Promise<LoginView>;
   startQr(): Promise<LoginView>;
-  /** 手粘授权码或整条回调 URL 的兜底路径。 */
-  submitCode(text: string): Promise<LoginView>;
   cancel(): Promise<void>;
   dispose(): void;
 }
@@ -432,17 +430,6 @@ export function createLoginManager(options: LoginManagerOptions): LoginManager {
       } catch (error) {
         return fail('upstream-error', error instanceof Error ? error.message : '获取二维码失败');
       }
-    },
-
-    async submitCode(text: string) {
-      if (disposed) return idle();
-      if (expectedState === '') {
-        // 没发起过网页登录就没有 state 可比：这是编程路径问题，不是用户操作错误。
-        return fail('state-mismatch', '没有进行中的网页登录，请先点「网页登录」再粘授权码');
-      }
-      const parsed = extractAuthorizationCode(text, expectedState);
-      if ('error' in parsed) return fail('state-mismatch', parsed.error);
-      return await redeemCode(parsed.code, 'web');
     },
 
     async cancel() {

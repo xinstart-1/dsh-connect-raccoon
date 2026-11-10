@@ -5,7 +5,7 @@
  * 2026-11-10 实测过最迷惑的一种状态 —— 插件已装进 profile、构建也全绿，但 DSH 主进程
  * 是在安装**之前**启动的，于是路由一直 404，看起来像加载失败，实际只是没重启。
  *
- * 用法：`node scripts/verify-live.mjs [--url http://127.0.0.1:49204]`
+ * 用法：`node scripts/verify-live.mjs [--url http://127.0.0.1:<端口>]`（不给则自动探测）
  *
  * 判定顺序刻意从「最便宜的证据」开始：先看进程启动时间，再看路由。
  */
@@ -15,13 +15,14 @@ import { readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
+import { resolveGuiBase } from './gui-url.mjs';
 
 const pkgJson = JSON.parse(readFileSync('package.json', 'utf8'));
 const require = createRequire(resolve(process.cwd(), 'package.json'));
 const args = process.argv.slice(2);
 const requireLive = args.includes('--require-live');
 const urlArg = args.includes('--url') ? args[args.indexOf('--url') + 1] : undefined;
-const base = (urlArg ?? process.env['DSH_GUI_URL'] ?? 'http://127.0.0.1:49204').replace(/\/+$/, '');
+const base = await resolveGuiBase({ pluginName: pkgJson.name, args });
 
 const problems = [];
 const notes = [];

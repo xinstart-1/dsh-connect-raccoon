@@ -12,16 +12,17 @@
  * 用一个假授权码，上游会回 `200035 authorization_code_not_found_error`，
  * 这恰好是预期结果（不可恢复的错误码，文案应引导重新登录）。
  *
- * 用法：`node scripts/probe-loopback.mjs [--url http://127.0.0.1:49204]`
+ * 用法：`node scripts/probe-loopback.mjs [--url http://127.0.0.1:<端口>]`（不给则自动探测）
  */
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { resolveGuiBase } from './gui-url.mjs';
 
 const pkg = JSON.parse(readFileSync(resolve('package.json'), 'utf8'));
 const args = process.argv.slice(2);
 const urlArg = args.includes('--url') ? args[args.indexOf('--url') + 1] : undefined;
-const base = (urlArg ?? process.env['DSH_GUI_URL'] ?? 'http://127.0.0.1:49204').replace(/\/+$/, '');
+const base = await resolveGuiBase({ pluginName: pkg.name, args });
 const ACTION = `${base}/plugins/${pkg.name}/action`;
 
 const problems = [];

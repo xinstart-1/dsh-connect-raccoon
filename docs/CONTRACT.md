@@ -171,7 +171,6 @@
 | --- | --- | --- | --- |
 | `refresh` | `{force?: boolean}` | 重拉目录/积分/账号状态并写缓存 | `{ok, status}` |
 | `login-web` | `{}` | 起本地回环登录（见 §四） | `{ok, login}` |
-| `login-code` | `{text: string}` | 手粘授权码或整条回调 URL（兜底） | `{ok, account?}` |
 | `login-qr` | `{}` | 起微信小程序扫码登录 | `{ok, login}` |
 | `login-status` | `{}` | 读当前登录会话 | `{ok, login}` |
 | `cancel-login` | `{}` | 取消进行中的登录 | `{ok, login}` |

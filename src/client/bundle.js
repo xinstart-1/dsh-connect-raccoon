@@ -179,7 +179,7 @@
     sourceSaved: '缓存',
     sourceBuiltin: '内置兜底',
 
-    loginHintWeb: '点下面的按钮在浏览器里完成授权；授权页会把授权码送到本地回环地址。回调没生效时，把授权码或整条回调 URL 粘到下面。',
+    loginHintWeb: '点下面的按钮在浏览器里完成授权；授权页会把授权码自动送到本机回环地址，不用手动复制。',
     loginHintQr: '用微信扫下面的码，在小程序里确认登录。',
     loginPhaseIdle: '当前没有进行中的登录。',
     loginPhaseWaiting: '等待你在浏览器里完成登录…',
@@ -190,10 +190,6 @@
     loginPhaseCancelled: '已取消',
     loginPhaseError: '登录失败',
     loginOpenAuthorize: '打开授权页',
-    loginPasteTitle: '手粘授权码',
-    loginPasteLabel: '把授权码粘在这里',
-    loginPastePlaceholder: '粘授权码，或整条 http://127.0.0.1:…/auth/callback?code=… 链接',
-    loginSubmitCode: '提交授权码',
     loginCancel: '取消登录',
     loginQrMissing: '还没拿到二维码，稍等一下或重新发起扫码登录。',
     loginExpiresAt: '这个会话在 {time} 前有效',
@@ -371,7 +367,7 @@
     sourceSaved: 'cached',
     sourceBuiltin: 'built-in fallback',
 
-    loginHintWeb: 'Press the button to finish authorizing in your browser; the authorize page delivers the code to a loopback address. If the callback does not land, paste the code or the whole callback URL below.',
+    loginHintWeb: 'Press the button to finish authorizing in your browser; the authorize page delivers the code to a loopback address automatically, with no copying needed.',
     loginHintQr: 'Scan the code with WeChat and confirm in the mini-program.',
     loginPhaseIdle: 'No sign-in in progress.',
     loginPhaseWaiting: 'Waiting for you to finish signing in…',
@@ -382,10 +378,6 @@
     loginPhaseCancelled: 'Cancelled',
     loginPhaseError: 'Sign-in failed',
     loginOpenAuthorize: 'Open authorize page',
-    loginPasteTitle: 'Paste an authorization code',
-    loginPasteLabel: 'Paste the code here',
-    loginPastePlaceholder: 'Paste the code, or the whole http://127.0.0.1:…/auth/callback?code=… URL',
-    loginSubmitCode: 'Submit code',
     loginCancel: 'Cancel sign-in',
     loginQrMissing: 'No QR code yet; wait a moment or start QR sign-in again.',
     loginExpiresAt: 'This session is valid until {time}',
@@ -811,7 +803,7 @@
           .then(function (result) {
             // 动作返回的信封里可能直接带整份 `status` 或新的 `login`：就地铺进快照，
             // 界面立刻反映结果，不必等下一次轮询。
-            // `ok:false` 也要铺：`login-code` 失败回的是「已过期的 login 视图」，
+            // `ok:false` 也要铺：登录类动作失败时回的是「已过期的 login 视图」，
             // 丢掉它界面会一直停在旧相位上。
             if (result !== undefined && result !== null) {
               if (!applyStatus(result.status)) applyLogin(result.login);
@@ -1477,9 +1469,6 @@
         if (typeof phase !== 'string' || phase === '') phase = 'idle';
         var running = login !== undefined && login !== null && login.running === true;
         var kind = login === undefined || login === null ? undefined : login.kind;
-        var textState = React.useState('');
-        var text = textState[0];
-        var setText = textState[1];
         /** 上一次见到的相位；只在「刚变成 done」那一刻刷新账号池。 */
         var previousPhaseRef = React.useRef(phase);
 
@@ -1516,15 +1505,6 @@
           if (phase !== 'done' || was === 'done') return;
           props.onLoggedIn();
         }, [phase]);
-
-        /** 手粘授权码：提交后不本地猜测结果，一切以宿主返回的相位为准。 */
-        function submitCode() {
-          if (text.trim() === '') return;
-          void props.perform('login-code', { text: text.trim() }, function (result) {
-            if (result !== undefined && result.ok === true) setText('');
-            return '';
-          });
-        }
 
         var actions = h(
           'div',
@@ -1629,28 +1609,10 @@
                 )
               : null
           ),
-          kind === 'qr'
-            ? null
-            : h(
-                Card,
-                { title: t('loginPasteTitle') },
-                h('div', { className: 'dsr-field' },
-                  h('span', { className: 'dsr-field-label' }, t('loginPasteLabel')),
-                  h('textarea', {
-                    className: 'dsr-textarea',
-                    placeholder: t('loginPastePlaceholder'),
-                    value: text,
-                    onChange: function (event) {
-                      setText(event.target.value);
-                    }
-                  })
-                ),
-                h(
-                  'div',
-                  { className: 'dsr-toolbar' },
-                  h(Button, { tone: 'primary', disabled: busy || text.trim() === '', onClick: submitCode }, t('loginSubmitCode'))
-                )
-              )
+          // 没有「手粘授权码」入口：网页登录靠回环回调自动收码，
+          // 客户端靠 adopt-desktop 自动读取。多一个粘贴框只会让用户以为
+          // 主路径不可靠，还要自己从 DevTools 里抠 URL。
+          null
         );
       }
 
@@ -1799,7 +1761,7 @@
         function perform(action, body, describe) {
           setBusy(true);
           return act(action, body).then(function (result) {
-            // `ok:false` 不一定带 error：`test-account` 探测不通过、`login-code` 授权码
+            // `ok:false` 不一定带 error：`test-account` 探测不通过、登录动作失败
             // 过期都只是「结果不理想」，它们的业务数据（probe / login）仍然要显示。
             var failed = result !== undefined && result.ok === false;
             var hasError = failed && result.error !== undefined && result.error !== null;

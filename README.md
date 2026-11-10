@@ -259,6 +259,8 @@ NODE="C:/Users/<you>/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin
 - **企业版 / 教育版账号**的签到与「领取」不适用（上游对这类账号的个人权益写接口一律拒绝）。
 - **没有「自动每日签到」**：签到接口与去重都已实现，但定时触发还没接线（`state.autoCheckin`
   目前只是保留字段，不产生行为）。想签到就手动点一次。
+- **登录只有两条路**：有客户端就自动读（`adopt-desktop`），没有就网页授权或扫码。
+  界面里**没有**「手粘授权码」入口 —— 那会让用户以为主路径不可靠，还得自己从 DevTools 抠 URL。
 - **Windows 上凭据文件权限不受 `mode` 控制**：插件以 `0600` 写入仓库文件，Unix 上生效；
   Windows 会忽略 POSIX mode（实测落盘恒为 666），只能靠 `%USERPROFILE%` 的目录 ACL 保护。
   这一点在 `docs/VERIFY.md` 有实测记录，不要以为「设了 0600 就安全」。

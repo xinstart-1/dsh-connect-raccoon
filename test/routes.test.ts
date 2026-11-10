@@ -216,7 +216,9 @@ test('POST /action：deps.action 抛 code-expired → 200 且 ok=false、error.c
   const res = await call(port, {
     method: 'POST',
     path: ACTION_PATH,
-    body: JSON.stringify({ action: 'login-code', text: 'x' }),
+    // 这里验的是「业务错误如何透传」，与具体动作无关；
+    // 用一个仍存在的动作，避免这条断言绑死在被删掉的入口上。
+    body: JSON.stringify({ action: 'switch-account', accountId: 'acc_x' }),
   });
   assert.equal(res.status, 200, '业务错误是可预期结果，应 200 而不是 5xx');
   const body = JSON.parse(res.text) as { ok?: boolean; error?: { code?: string; message?: string } };
