@@ -210,3 +210,27 @@ test('desktop 昵称来自 credential.nickname：探测解出 JWT 的 name 后�
   assert.equal(status.desktop.detected, true, '读到了凭据就是 detected');
   assert.equal(status.desktop.adopted, false, '还没采纳进池时 adopted 应为 false');
 });
+
+test('buildStatus：state 必须透出 PluginState 的全部字段', () => {
+  // 这份文档是浏览器半边唯一的真值来源。任何字段被「手工抄写」漏掉，
+  // 对应控件的「已勾选」判断就读不到真值 —— 典型表现是复选框点不动 /
+  // 取消不掉（`showHiddenModels` 就这么漏过一次：磁盘上是 true，
+  // /status 里没有这个键，客户端恒读成 false，于是每次点击都发 true）。
+  const state: PluginState = { ...DEFAULT_STATE, showHiddenModels: true };
+  const doc = buildStatus(statusInput({ state }));
+
+  const missing = Object.keys(DEFAULT_STATE).filter((key) => !(key in doc.state));
+  assert.deepEqual(missing, [], `status.state 漏掉了字段：${missing.join(', ')}`);
+  assert.equal(doc.state.showHiddenModels, true, 'showHiddenModels 必须透传真实值');
+  assert.equal(doc.state.reuseDesktop, true, 'reuseDesktop 仍需保留（来自配置而非状态）');
+});
+
+test('buildStatus：state 里的数组是拷贝，不与内存态共享引用', () => {
+  // 序列化出去的文档若和内存态共享数组，调用方 push 一下就会改到插件内部状态。
+  const state: PluginState = { ...DEFAULT_STATE, disabledModels: ['a'], enabledAccounts: ['acc_1'] };
+  const doc = buildStatus(statusInput({ state }));
+  doc.state.disabledModels.push('b');
+  doc.state.enabledAccounts.push('acc_2');
+  assert.deepEqual(state.disabledModels, ['a'], 'disabledModels 被外部改动污染了内存态');
+  assert.deepEqual(state.enabledAccounts, ['acc_1'], 'enabledAccounts 被外部改动污染了内存态');
+});

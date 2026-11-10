@@ -30,6 +30,7 @@ const MUTATIONS = [
   // 已接受：Windows 忽略 POSIX mode（实测落盘恒为 666），该测试在 Windows 上
   // 明确 skip。权限验证需在 Unix 上做 —— 见 docs/VERIFY.md。
   // ['凭据文件权限', ...],
+  ['status 透出全字段', 'src/host/status.ts', '      ...input.state,', '      ...input.state,\n      showHiddenModels: false,', 'test/status.test.ts', '状态字段被截断（复选框读不到真值 → 取消不掉）'],
   ['未来版本守卫', 'src/state.ts', 'version > STATE_SCHEMA_VERSION', 'version > 99', 'test/state.test.ts', '未来版本被当成当前格式解读'],
   ['池过滤不可用', 'src/host/pool.ts', 'input.candidates.filter((candidate) => candidate.inPool && candidate.usable)', 'input.candidates.filter((candidate) => candidate.inPool)', 'test/pool.test.ts', '不可用账号混进换号序列'],
   ['SSE 错误帧识别', 'src/protocol/sse.ts', "const nested = record['error'];", "const nested = undefined;", 'test/sse.test.ts', '流内限流帧认不出来'],

@@ -50,6 +50,8 @@ export interface ModelView {
   multiplier: string;
   promo: string | null;
   reasoning: boolean;
+  /** 上游标记为未公开（`visible:false`）；界面据此加提示，不改变可用性。 */
+  hidden: boolean;
   enabled: boolean;
 }
 
@@ -95,15 +97,15 @@ export interface StatusDocument {
     lastRunAtMs: number | null;
     results: Array<{ accountId: string; outcome: string; message: string }>;
   };
-  state: {
-    disabledModels: string[];
-    accountPoolEnabled: boolean;
-    enabledAccounts: string[];
-    composerPill: boolean;
-    pollIntervalMs: number;
-    autoCheckin: boolean;
-    reuseDesktop: boolean;
-  };
+  /**
+   * 完整插件状态 + 配置项 `reuseDesktop`。
+   *
+   * **不要在这里逐字段抄写**：这份文档是浏览器半边唯一的真值来源，
+   * 抄漏一个字段就会让对应控件的「已勾选」判断永远读不到真值 ——
+   * 典型表现是复选框点不动 / 取消不掉（`showHiddenModels` 就这么漏过一次）。
+   * 直接复用 {@link PluginState}，加字段时不用改这里。
+   */
+  state: PluginState & { reuseDesktop: boolean };
 }
 
 /** 构建状态文档所需的全部输入。 */
@@ -261,6 +263,7 @@ export function buildStatus(input: StatusInput): StatusDocument {
         multiplier: model.multiplier,
         promo: model.promo ?? null,
         reasoning: model.reasoning,
+        hidden: model.hidden,
         enabled: !input.state.disabledModels.includes(model.id),
       })),
     },
@@ -271,12 +274,10 @@ export function buildStatus(input: StatusInput): StatusDocument {
       results: input.checkin.results,
     },
     state: {
+      ...input.state,
+      // 数组做一次拷贝：这份文档会被序列化给别人，不该和内存态共享引用。
       disabledModels: [...input.state.disabledModels],
-      accountPoolEnabled: input.state.accountPoolEnabled,
       enabledAccounts: [...input.state.enabledAccounts],
-      composerPill: input.state.composerPill,
-      pollIntervalMs: input.state.pollIntervalMs,
-      autoCheckin: input.state.autoCheckin,
       reuseDesktop: input.reuseDesktop,
     },
   };
