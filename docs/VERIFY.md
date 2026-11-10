@@ -1,7 +1,7 @@
 # 真机验证清单
 
 > 自动化门禁（`node scripts/gate.mjs`）覆盖了类型、构建、静态自检、文档契约、宿主装载、
-> 打包清单与 116 条单测。**它覆盖不到真机链路**：桌面端凭据、浏览器回环回调、微信扫码
+> 打包清单与 118 条单测。**它覆盖不到真机链路**：桌面端凭据、浏览器回环回调、微信扫码
 > 这三条都需要真人操作上游页面。本文件是那部分的清单。
 >
 > 本机当前状态（2026-11-10）：**未安装小浣熊桌面端**（注册表 / 文件系统 / 进程三处均无证据，
@@ -105,12 +105,13 @@ NODE="C:/Users/<you>/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin
 | `check-doc-contract` | CONTRACT 里的动作、相位、路由与代码逐个对应 |
 | `check-host` | 宿主能 import、四件套齐全、无 default 导出、patch 行名等于包名、peer 范围逐段带 rc |
 | `check-pack` | 打包清单含必需文件、未混入源码/测试/文档 |
-| `tests` | 116 条单测（逐文件跑，报告落 `test-report.txt`） |
+| `tests` | 118 条单测（逐文件跑，报告落 `test-report.txt`） |
 | `preview-ui` | 浏览器半边三个槽位组件真能被渲染 |
 | `smoke-apply` | 真跑 `apply()`：路由 200、shim 监听、无密钥 401、卸载关端口 |
 | `check-cordis` | 用**真的** Cordis `Context` 装载、卸载后注册全释放 |
 | `check-profile` | profile 里那份已安装副本与源码构建一致（防「改了没生效」） |
 | `probe-pool` | **账号池 + 自动换号**：真插件 + 真 Cordis + 本地假上游，断言 A(401) → B(200) 的换号序列、第二次请求不再重复烧失败 |
+| `probe-desktop` | **桌面端链路**：模拟客户端 `auth.json` → 预热自动采纳进池 → 过期令牌单飞续期 → 写回（保留未知字段与 App 键序、留备份） |
 | `verify-live` | **运行中的宿主**里 `/status` 回契约形状、无令牌字段、目录非空、客户端 bundle 在位；并比对「主进程启动时间 vs 插件安装时间」 |
 | `probe-loopback` | **对着运行中的宿主**真发一次网页登录：本地监听、`state` 64hex、错的 state 回 400、对的 state 2ms 内回 HTML、假授权码打到真上游被归类成 `code-expired` |
 
@@ -124,6 +125,18 @@ ok   state 64hex ✓ redirect ✓ (http://127.0.0.1:61050/auth/callback)
 ok   错 state → 400 ✓
 ok   对 state 回调 → 200，用时 2ms，页面 460 字节
 ok   换码失败归类 ✓ code=code-expired（上游 授权码已失效（一次性，可能已用过）...）
+```
+
+桌面端链路（模拟客户端 + 本地假上游，不碰真实客户端）：
+
+```text
+ok   模拟客户端在 <tmp>\.box-agent\config（访问令牌已过期 60 秒，带 1 个未知字段）
+ok   客户端文件的 access_token 已更新为轮转后的新值 ✓
+ok   refresh_token 同步轮转 ✓
+ok   未知字段与 App 键序原样保留 ✓
+ok   写回前留了备份：.auth.json.dsh-backup ✓
+ok   续期只发了 1 次请求 ✓
+ok   仓库里 1 条 desktop 账号：昵称「桌面小王」/ identity id-from-client ✓
 ```
 
 扫码链路另测（真实上游签发）：`login-qr` → `phase=waiting`、`qrSvg` 16965 字节（57×57 模块）、
@@ -149,8 +162,8 @@ ok   第二次请求直接用 B（A 在冷却中，没重复烧失败）✓
 | 池内换号在**真实**上游上的表现 | 已用本地假上游端到端验过 | 真实上游的限流/失效码与假上游一致（都按 `docs/PROTOCOL.md` 的码表），但真号轮转（尤其 refresh 单次使用）需两个真账号才能观察 |
 | 微信真的扫一次并确认 | **未验证** | 只验到「服务端签发二维码 + 轮询 pending + 取消」；`success` 分支要真手机扫 |
 | 扫码是否给 refresh token | 倾向「没有」 | 参考实现只取 access token |
-| 桌面端 auth.json 真实形态 | 未验证 | 本机没装客户端；结论来自他机实测 + 参考实现代码 |
-| 桌面端写回**不触发**客户端校验 | 未验证 | 需要客户端在场才能观察 |
+| 桌面端 `auth.json` 的**真实**文件形态 | 待真机 | `probe-desktop` 用模拟文件验了整条链路；文件格式结论来自他机实测 + 参考实现代码 |
+| 桌面端写回**不触发**客户端校验 | 待真机 | 需要客户端进程在场才能观察（写回逻辑本身已端到端验过） |
 | `iam/confirm` 成功时 `xhx_token` 的形态 | 未验证 | 需要合法 IAM token |
 | refresh 能否带 `Authorization` | 冲突未解 | 两份证据互相矛盾，按「不带」实现 |
 | macOS / Linux 凭据路径 | 未验证 | 只在 Windows 真机跑过 |

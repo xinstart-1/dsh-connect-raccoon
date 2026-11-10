@@ -133,6 +133,9 @@ export function createAccounts(options: AccountsOptions): Accounts {
         credential: resolved.credential,
         authPath: resolved.authPath,
         nowMs: now(),
+        // 探测阶段已经从 JWT 里解出了昵称，这里必须带过去 ——
+        // 否则采纳进来的账号在界面上永远是「无昵称」，用户分不清是谁的号。
+        ...(resolved.credential.nickname === undefined ? {} : { nickname: resolved.credential.nickname }),
       });
       await options.vault.save(account);
       const selected = await options.vault.readSelected();

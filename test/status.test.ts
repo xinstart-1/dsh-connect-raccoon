@@ -185,3 +185,28 @@ test('buildStatus：空目录 → models 为空、count 为 0 且不抛', () => 
   assert.equal(doc.catalog.source, 'fallback', '来源应如实透传');
   assert.equal(doc.catalog.error, '目录拉取失败', '目录错误应如实透传');
 });
+
+test('desktop 昵称来自 credential.nickname：探测解出 JWT 的 name 后，状态里就该显示它', () => {
+  // 昵称曾经错取 identity（那是内部 id，不是给人看的名字）。
+  const status = buildStatus(statusInput({
+    desktop: {
+      configDir: '/tmp/.box-agent/config',
+      authPath: '/tmp/.box-agent/config/auth.json',
+      exists: true,
+      readable: true,
+      multiAccount: false,
+      reason: null,
+      keyOrderMatchesApp: true,
+      credential: {
+        accessToken: 'a',
+        refreshToken: 'r',
+        rawKeys: [],
+        identity: 'identity-1',
+        nickname: '桌面小王',
+      },
+    },
+  }));
+  assert.equal(status.desktop.nickname, '桌面小王', '昵称必须取自 credential.nickname，而不是 identity');
+  assert.equal(status.desktop.detected, true, '读到了凭据就是 detected');
+  assert.equal(status.desktop.adopted, false, '还没采纳进池时 adopted 应为 false');
+});

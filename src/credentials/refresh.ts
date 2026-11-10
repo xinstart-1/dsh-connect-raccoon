@@ -11,7 +11,8 @@
  * @module dsh-connect-raccoon/credentials/refresh
  */
 
-import { AUTH_BASE, REFRESH_COOLDOWN_MS, REQUEST_TIMEOUT_MS } from '../constants.ts';
+import { REFRESH_COOLDOWN_MS, REQUEST_TIMEOUT_MS } from '../constants.ts';
+import { endpointsOf } from '../protocol/client.ts';
 import { decodeJwtFacts } from './vault.ts';
 
 /** 一次成功续期的结果。 */
@@ -94,10 +95,13 @@ export function createRefresher(deps: {
   fetchImpl?: typeof fetch;
   now?: () => number;
   warn?: (message: string) => void;
+  /** 主站 origin；留空用内置地址。必须与上游客户端用同一个值，否则续期会打到别处。 */
+  siteOrigin?: string;
 } = {}): Refresher {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const now = deps.now ?? ((): number => Date.now());
   const warn = deps.warn ?? ((): void => {});
+  const endpoints = endpointsOf(deps.siteOrigin);
   /** 进行中的刷新：同账号的后来者直接等这一次。 */
   const inflight = new Map<string, Promise<RefreshOutcome>>();
   /** 冷却截止时间：限流是「此刻」的事实，不落盘。 */
@@ -115,7 +119,7 @@ export function createRefresher(deps: {
   };
 
   const once = async (refreshToken: string): Promise<RefreshOutcome> => {
-    const response = await fetchImpl(`${AUTH_BASE}/refresh`, {
+    const response = await fetchImpl(`${endpoints.auth}/refresh`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({ refresh_token: refreshToken }),

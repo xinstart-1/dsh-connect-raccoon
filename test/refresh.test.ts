@@ -161,3 +161,19 @@ test('锁按账号隔离：不同 accountKey 并发 → fetch 被调用 2 次', 
   assert.equal(refresher.cooldownMs('k-a'), 0, '成功刷新不应给 k-a 留下冷却');
   assert.equal(refresher.cooldownMs('k-b'), 0, '成功刷新不应给 k-b 留下冷却');
 });
+
+test('siteOrigin 生效：配了自建上游 → 续期请求打到那个 origin，而不是内置站点', async () => {
+  const { impl, calls } = countingFetch(() => respond(200, {
+    code: 0,
+    data: { access_token: 'a', refresh_token: 'r' },
+  }));
+  const refresher = createRefresher({ fetchImpl: impl, siteOrigin: 'http://127.0.0.1:9999' });
+
+  await refresher.refresh({ accountKey: 'k-origin', refreshToken: 'oldR' });
+
+  assert.equal(
+    calls[0]?.url,
+    'http://127.0.0.1:9999/api/web/auth/v1/refresh',
+    '续期必须跟随 siteOrigin，否则改了配置只有对话换地址、续期还打真实站点',
+  );
+});
