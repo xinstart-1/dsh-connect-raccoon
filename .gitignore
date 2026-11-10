@@ -18,3 +18,15 @@ test-report.txt
 .DS_Store
 Thumbs.db
 *.log
+
+# ── 凭据与本地产物：永不入库（2026-11-10 加固）──
+.npmrc
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.dsh-file-attachment/
+
+# ── 会话附件（用户粘贴的截图）：永不入库（2026-11-10 清理）──
+.dsh-file-attachment/
