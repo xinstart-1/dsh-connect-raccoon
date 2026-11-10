@@ -243,10 +243,47 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     Object.assign(new Error(message), { code }) as RaccoonError;
 
   /** 校验 body 里的账号 id 存在。 */
+  /**
+   * 把桌面端探测的分类码翻成一句能让用户立刻行动的话。
+   *
+   * @param code - `DesktopReason` 之一（也可能是 adoptDesktop 自己给的配置类原因）。
+   * @returns 面向用户的一句话。
+   */
+  const desktopHint = (code: string): string => {
+    switch (code) {
+      case 'desktop-missing':
+        return '本机没装小浣熊桌面端（找不到 ~/.box-agent/config/auth.json）。没有客户端就用「网页登录」或「扫码登录」';
+      case 'desktop-unreadable':
+        return '找到了客户端凭据文件，但没有读权限。检查文件权限，或用网页登录';
+      case 'desktop-no-token':
+        return '客户端凭据文件在，但里面没有可用的登录令牌 —— 先在小浣熊客户端里登录一次，再回来点这个按钮';
+      case 'desktop-encrypted':
+        return '客户端凭据是加密的，本插件解不开。请改用网页登录';
+      default:
+        return `没能从桌面端读到登录态（${code}）`;
+    }
+  };
+
   const requireAccountId = (body: Record<string, unknown>): string => {
     const id = body['accountId'];
     if (typeof id !== 'string' || id === '') throw actionError('bad-request', '缺少 accountId');
     return id;
+  };
+
+  /**
+   * 读一个**可选**的字符串数组字段。
+   *
+   * 缺省返回 `undefined`（表示「全部/默认」）；给了但不是字符串数组就明确报错。
+   * 不能像以前那样「不是数组就当没给」—— 那样界面传错类型时会被静默当成
+   * 「导出全部」，用户以为只导了一个号，实际把整池都写进了文件。
+   */
+  const readOptionalIds = (body: Record<string, unknown>, field: string): string[] | undefined => {
+    const value = body[field];
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value) || !value.every((item): item is string => typeof item === 'string')) {
+      throw actionError('bad-request', `${field} 必须是字符串数组`);
+    }
+    return value;
   };
 
   return {
@@ -299,7 +336,12 @@ export function createRuntime(options: RuntimeOptions): Runtime {
           const probe = desktopProbe ?? (await options.accounts.probeDesktop());
           desktopProbe = probe;
           const adopted = await options.accounts.adoptDesktop(probe);
-          if (!adopted.ok) throw actionError(adopted.reason ?? 'desktop-missing', '没能从桌面端读到登录态');
+          if (!adopted.ok) {
+            // 错误码是给程序看的，「没装客户端」和「装了但没登录」要给出不同的可执行建议，
+            // 否则用户只会看到一句「没能读到登录态」，不知道该去装还是去登录。
+            const code = adopted.reason ?? 'desktop-missing';
+            throw actionError(code, desktopHint(code));
+          }
           return { ok: true, accountId: adopted.account?.id, status: await buildStatusDocument() };
         }
 
@@ -324,10 +366,8 @@ export function createRuntime(options: RuntimeOptions): Runtime {
         }
 
         case 'members': {
-          const ids = body['ids'];
-          if (!Array.isArray(ids) || !ids.every((item): item is string => typeof item === 'string')) {
-            throw actionError('bad-request', 'ids 必须是字符串数组');
-          }
+          const ids = readOptionalIds(body, 'ids');
+          if (ids === undefined) throw actionError('bad-request', '缺少 ids');
           const known = new Set((await options.vault.list()).map((account) => account.id));
           const filtered = ids.filter((id) => known.has(id));
           await options.saveState({ enabledAccounts: filtered });
@@ -364,9 +404,7 @@ export function createRuntime(options: RuntimeOptions): Runtime {
         }
 
         case 'checkin': {
-          const ids = Array.isArray(body['accountIds'])
-            ? body['accountIds'].filter((item): item is string => typeof item === 'string')
-            : options.state().enabledAccounts;
+          const ids = readOptionalIds(body, 'accountIds') ?? options.state().enabledAccounts;
           const results: Array<{ accountId: string; outcome: string; message: string }> = [];
           for (const id of ids) {
             results.push(await checkinOne(id));
@@ -376,10 +414,9 @@ export function createRuntime(options: RuntimeOptions): Runtime {
         }
 
         case 'export-accounts': {
-          const ids = Array.isArray(body['accountIds'])
-            ? body['accountIds'].filter((item): item is string => typeof item === 'string')
-            : (await options.vault.list()).map((account) => account.id);
+          const requested = readOptionalIds(body, 'accountIds');
           const all = await options.vault.list();
+          const ids = requested ?? all.map((account) => account.id);
           const chosen = all.filter((account) => ids.includes(account.id));
           const preview = chosen.map((account) => ({
             id: account.id,
@@ -408,12 +445,6 @@ export function createRuntime(options: RuntimeOptions): Runtime {
           }
           const outcome = await importAccounts(text);
           return { ok: true, imported: outcome.imported, skipped: outcome.skipped };
-        }
-
-        case 'logout': {
-          const id = requireAccountId(body);
-          await options.accounts.remove(id);
-          return { ok: true, status: await buildStatusDocument() };
         }
 
         default: {

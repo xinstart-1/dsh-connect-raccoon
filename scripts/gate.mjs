@@ -18,6 +18,8 @@ const steps = [
   ['check-client', [process.execPath, 'scripts/check-client.mjs']],
   // 文档里承诺的功能必须在代码里真的存在。
   ['check-doc-contract', [process.execPath, 'scripts/check-doc-contract.mjs']],
+  // 浏览器调的动作 vs 宿主实现的动作：名字与字段双向一致（无类型检查可依赖）。
+  ['check-actions', [process.execPath, 'scripts/check-actions.mjs']],
   // 宿主能不能真的 import 这个包、client.js 能不能解析。
   ['check-host', [process.execPath, 'scripts/check-host.mjs']],
   // files 白名单漏一个目录 = 本地全绿、装的人拿到一个没界面的包。
@@ -38,7 +40,11 @@ const steps = [
   // 运行中的宿主是否真的装起来了。不装插件时跳过（`--live` 强制要求它在跑）。
   ['verify-live', [process.execPath, 'scripts/verify-live.mjs', ...(process.argv.includes('--live') ? ['--require-live'] : [])]],
   // 回环回调端到端：只对着**跑起来的**宿主有意义。
-  ...(process.argv.includes('--live') ? [['probe-loopback', [process.execPath, 'scripts/probe-loopback.mjs']]] : []),
+  ...(process.argv.includes('--live') ? [
+    ['probe-loopback', [process.execPath, 'scripts/probe-loopback.mjs']],
+    // 15 个动作逐个打一遍：名字对得上 ≠ 调了没事。
+    ['probe-actions', [process.execPath, 'scripts/probe-actions.mjs']],
+  ] : []),
 ];
 
 const failures = [];

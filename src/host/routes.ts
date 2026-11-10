@@ -32,8 +32,7 @@ export type RaccoonAction =
   | 'test-account'
   | 'checkin'
   | 'import-accounts'
-  | 'export-accounts'
-  | 'logout';
+  | 'export-accounts';
 
 /** 动作白名单（路由层校验用，与类型同源）。 */
 export const ACTIONS: readonly RaccoonAction[] = [
@@ -52,7 +51,6 @@ export const ACTIONS: readonly RaccoonAction[] = [
   'checkin',
   'import-accounts',
   'export-accounts',
-  'logout',
 ];
 
 /** 请求体上限：这条路由只收开关，不该有更大的东西。 */

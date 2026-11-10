@@ -25,6 +25,8 @@ const base = (urlArg ?? process.env['DSH_GUI_URL'] ?? 'http://127.0.0.1:59224').
 
 const problems = [];
 const notes = [];
+/** 需要重启才能确认的事项：不算失败，但必须说出来。 */
+const pending = [];
 
 /** 本插件在哪个 profile 下被装上（找不到时抛错，由调用方解释）。 */
 function installedProfileDir() {
@@ -64,27 +66,39 @@ function processStartMs() {
     ).trim();
     if (output === '') return undefined;
     const parsed = JSON.parse(output);
-    const values = (Array.isArray(parsed) ? parsed : [parsed]).map((value) => {
-      const match = /\/Date\((\d+)\)\//.exec(String(value));
-      return match === null ? Date.parse(String(value)) : Number(match[1]);
-    }).filter((value) => Number.isFinite(value));
+    // PowerShell 的 ConvertTo-Json 把 DateTime 序列化成 `{value, DateTime}` 对象
+    // （Windows PowerShell 5.1）或 ISO 字符串（pwsh 7），两种都要认 ——
+    // 只认其中一种会让这项检查静默失效，而它正是用来抓「重启了但跑的是旧构建」的。
+    const values = (Array.isArray(parsed) ? parsed : [parsed])
+      .map((entry) => {
+        const raw = typeof entry === 'object' && entry !== null && 'value' in entry ? entry.value : entry;
+        const match = /\/Date\((\d+)\)\//.exec(String(raw));
+        return match === null ? Date.parse(String(raw)) : Number(match[1]);
+      })
+      .filter((value) => Number.isFinite(value));
+    // 取**最早**的那个：主进程总是先于它的渲染 / 工具子进程启动。
     return values.length === 0 ? undefined : Math.min(...values);
   } catch {
     return undefined;
   }
 }
 
-/** 已安装副本里任一新于启动时间 = 装完没重启。 */
+/** 已安装副本里任一文件新于启动时间 = 装完没重启（或在跑旧构建）。 */
 function installedNewestMs() {
   const dir = resolve(homedir(), '.dsh', 'profiles');
   const candidates = ['desktop', 'web', 'dytest'];
   let newest;
   for (const profile of candidates) {
-    try {
-      const value = statSync(resolve(dir, profile, 'node_modules', pkgJson.name, 'package.json')).mtimeMs;
-      if (Number.isFinite(value) && (newest === undefined || value > newest)) newest = value;
-    } catch {
-      // 这个 profile 没装，跳过。
+    // 必须看 **lib/index.js**：那才是宿主真正 import 的代码。
+    // 只看 package.json 会漏掉「重装后 manifest 新了、但 bundle 还是旧的」这种情形，
+    // 也会漏掉「装完之后又 build 了一次」—— 两种都表现为「重启了但行为没变」。
+    for (const file of ['lib/index.js', 'lib/client.js', 'package.json']) {
+      try {
+        const value = statSync(resolve(dir, profile, 'node_modules', pkgJson.name, file)).mtimeMs;
+        if (Number.isFinite(value) && (newest === undefined || value > newest)) newest = value;
+      } catch {
+        // 这个文件不存在或这个 profile 没装，跳过。
+      }
     }
   }
   return newest;
@@ -92,14 +106,22 @@ function installedNewestMs() {
 
 const startedAt = processStartMs();
 const installedAt = installedNewestMs();
+if (startedAt === undefined || installedAt === undefined) {
+  notes.push(
+    `跳过「是否跑着旧构建」这项比对（主进程启动时间 ${startedAt === undefined ? '取不到' : '已取到'}，`
+    + `已安装副本时间 ${installedAt === undefined ? '取不到' : '已取到'}）`,
+  );
+}
 if (startedAt !== undefined && installedAt !== undefined) {
   const startedLocal = new Date(startedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
   const installedLocal = new Date(installedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
   notes.push(`DSH 主进程启动于 ${startedLocal}，插件装进 profile 于 ${installedLocal}`);
   if (installedAt > startedAt) {
-    problems.push(
-      '插件是在 DSH 启动**之后**装进去的 —— 宿主只在启动时装载插件树，'
-      + '所以现在路由必然是 404。完全退出 DSH（含托盘）再启动即可，这不是插件缺陷。',
+    // 「跑着旧构建」是开发期的**常态**，不是缺陷 —— 只作为一个待办提示，
+    // 加上 `--require-live` 时才升级成失败（CI / 交付前用）。
+    pending.push(
+      '插件文件比 DSH 进程新 —— 现在跑的是**旧构建**。宿主只在启动时装载一次插件树，'
+      + '重启前看不到任何改动。完全退出 DSH（含托盘）再启动即可；这不是插件缺陷。',
     );
   }
 }
@@ -165,16 +187,20 @@ try {
   if (!clientSource.includes('__ModuleLoader__')) {
     problems.push('已安装的 lib/client.js 里没有 __ModuleLoader__（不是有效的客户端 bundle）');
   }
-  notes.push(`浏览器半边在位：${clientPath}（v${String(manifest.version)}，${String(clientSource.length)} 字节）`);
+  notes.push(`浏览器半边在位：${clientPath}（v${String(manifest.version)}，${String(Buffer.byteLength(clientSource))} 字节）`);
 } catch (error) {
   problems.push(`浏览器半边取不到：${error instanceof Error ? error.message : String(error)}`);
 }
 
 for (const note of notes) console.log(`info ${note}`);
+for (const item of pending) console.log(`todo ${item}`);
+if (pending.length > 0 && requireLive) problems.push(...pending);
 
 // 未装进任何 profile 时，这条检查在别人的机器上是**正常跳过**而不是失败：
 // 源码仓库不等于使用者已经装了。`--require-live` 把它变成硬要求（本地/CI 用）。
-const notInstalled = problems.length === 1 && problems[0].startsWith('浏览器半边取不到');
+// 「没装」只认这一条：profile 里找不到本插件。别把别的失败也归到这一类里 ——
+// 曾经它把「/status 404」也当成没装，于是真故障被静默跳过。
+const notInstalled = problems.length === 1 && problems[0].includes('没有 profile 安装本插件');
 if (notInstalled && !requireLive) {
   console.log('\n跳过：本插件还没装进任何 DSH profile（装完再跑一次即可）。');
   process.exit(0);

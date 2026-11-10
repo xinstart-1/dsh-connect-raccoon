@@ -239,3 +239,72 @@ test('GET /action：方法错 → 405 且 error.code 为 method-not-allowed', as
   assert.equal(body.error?.code, 'method-not-allowed', `error.code 应为 method-not-allowed，实际是 ${String(body.error?.code)}`);
   assert.equal(called, 0, '方法错的请求不得进入 deps.action');
 });
+
+test('动作请求体原样透传：路由层不改写字段，类型校验留给 runtime 才有机会报错', async (t) => {
+  // 曾经的 bug 在 runtime：export-accounts 收到 accountIds: 'oops' 时当成「没给」
+  // → 导出全部，用户以为只导一个号，实际把整池写进了文件。
+  // 路由层如果「顺手纠正」类型，runtime 就再也发现不了用户传错了，所以这里钉住透传。
+  const seen: Array<{ action: string; body: Record<string, unknown> }> = [];
+  const host = fakeHost();
+  registerRoutes(host.host, {
+    status: async () => ({ ok: true }),
+    action: async (action, body) => {
+      seen.push({ action, body });
+      return { ok: false };
+    },
+  });
+  const port = await serve(host.handlers, t);
+  const response = await call(port, {
+    method: 'POST',
+    path: '/plugins/dsh-connect-raccoon/action',
+    body: JSON.stringify({ action: 'export-accounts', accountIds: 'oops' }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(seen.length, 1, '动作应恰好被调用一次');
+  assert.equal(seen[0]?.action, 'export-accounts', '动作名应被取出传给 deps.action');
+  assert.deepEqual(
+    seen[0]?.body['accountIds'],
+    'oops',
+    '路由层必须原样透传字段 —— 顺手纠正类型会让 runtime 看不见用户传错',
+  );
+});
+
+test('runtime 参数校验：可选 id 数组给了非数组时必须报错，而不是当成「没给」', async () => {
+  // 这条是上面那条透传的真实后果：路由透传 'oops' 进来后，runtime 必须拒绝它。
+  // 直接测 runtime 的校验规则（不装插件，只验纯逻辑）。
+  const { createRuntime } = await import('../src/host/runtime.ts');
+  const calls: string[] = [];
+  const runtime = createRuntime({
+    vault: {
+      rootDir: () => '/tmp/none',
+      list: async () => [],
+      save: async () => undefined,
+      readSelected: async () => undefined,
+      writeSelected: async () => undefined,
+      remove: async () => undefined,
+    },
+    accounts: {
+      probeDesktop: async () => ({ exists: false, detected: false }),
+      adoptDesktop: async () => ({ ok: false, reason: 'desktop-missing' }),
+      usability: () => ({ usable: true }),
+      credits: async () => undefined,
+      accessToken: async () => 'token',
+      markCooldown: () => undefined,
+      cooldownMs: () => 0,
+    },
+    client: {
+      fetchCatalog: async () => { calls.push('catalog'); throw new Error('不该发请求'); },
+    },
+    warn: () => undefined,
+    state: () => ({ accountPoolEnabled: false, enabledAccounts: [], composerPill: true, autoCheckin: false, disabledModels: [], pollIntervalMs: 60000 }),
+    saveState: async (patch) => ({ accountPoolEnabled: false, enabledAccounts: [], composerPill: true, autoCheckin: false, disabledModels: [], pollIntervalMs: 60000, ...patch }),
+    config: () => ({ enabled: true, reuseDesktop: false }),
+  });
+  await assert.rejects(
+    () => runtime.run('export-accounts', { accountIds: 'oops' }),
+    /accountIds 必须是字符串数组/,
+    '非字符串数组必须明确报错；当成「没给」会把整池导出给一个以为只导了一个号的用户',
+  );
+  assert.deepEqual(calls, [], '校验失败不该打上游');
+});

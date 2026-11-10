@@ -184,7 +184,6 @@
 | `checkin` | `{accountIds?: string[]}` | 给指定/勾选账号逐个签到（**写操作**） | `{ok, results}` |
 | `import-accounts` | `{text: string}` | 粘 JSON 导入（**必须带令牌**；脱敏记录会被跳过） | `{ok, imported, skipped}` |
 | `export-accounts` | `{accountIds?: string[]}` | 导出到 `$DSH_HOME/raccoon-vault/exports/*.json`（**令牌落文件、不进页面**） | `{ok, count, path, text}`（`text` 是脱敏预览） |
-| `logout` | `{accountId: string}` | 只删插件自己存的那份 | `{ok, status}` |
 
 **`error.code` 取值**（稳定标识，不随文案变）：
 `not-configured`、`loopback-only`、`already-running`、`not-running`、`no-such-account`、

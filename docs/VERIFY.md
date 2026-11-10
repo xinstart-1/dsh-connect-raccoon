@@ -1,7 +1,7 @@
 # 真机验证清单
 
 > 自动化门禁（`node scripts/gate.mjs`）覆盖了类型、构建、静态自检、文档契约、宿主装载、
-> 打包清单与 118 条单测。**它覆盖不到真机链路**：桌面端凭据、浏览器回环回调、微信扫码
+> 打包清单与 120 条单测。**它覆盖不到真机链路**：桌面端凭据、浏览器回环回调、微信扫码
 > 这三条都需要真人操作上游页面。本文件是那部分的清单。
 >
 > 本机当前状态（2026-11-10）：**未安装小浣熊桌面端**（注册表 / 文件系统 / 进程三处均无证据，
@@ -103,9 +103,10 @@ NODE="C:/Users/<you>/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin
 | `copy-client` | 浏览器半边拷贝完整性（字节数比对） |
 | `check-client` | 语法 / 无 import-export / zh-en 同键 / `t()` 键存在 / 路径逐字一致 / 无令牌字段 |
 | `check-doc-contract` | CONTRACT 里的动作、相位、路由与代码逐个对应 |
+| `check-actions` | **动作契约双向**：宿主实现的 15 个动作浏览器都要调（死代码会被抓）、浏览器调的宿主都要实现、字段名双向一致（无类型检查可依赖） |
 | `check-host` | 宿主能 import、四件套齐全、无 default 导出、patch 行名等于包名、peer 范围逐段带 rc |
 | `check-pack` | 打包清单含必需文件、未混入源码/测试/文档 |
-| `tests` | 118 条单测（逐文件跑，报告落 `test-report.txt`） |
+| `tests` | 120 条单测（逐文件跑，报告落 `test-report.txt`） |
 | `preview-ui` | 浏览器半边三个槽位组件真能被渲染 |
 | `smoke-apply` | 真跑 `apply()`：路由 200、shim 监听、无密钥 401、卸载关端口 |
 | `check-cordis` | 用**真的** Cordis `Context` 装载、卸载后注册全释放 |
@@ -114,8 +115,14 @@ NODE="C:/Users/<you>/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin
 | `probe-desktop` | **桌面端链路**：模拟客户端 `auth.json` → 预热自动采纳进池 → 过期令牌单飞续期 → 写回（保留未知字段与 App 键序、留备份） |
 | `verify-live` | **运行中的宿主**里 `/status` 回契约形状、无令牌字段、目录非空、客户端 bundle 在位；并比对「主进程启动时间 vs 插件安装时间」 |
 | `probe-loopback` | **对着运行中的宿主**真发一次网页登录：本地监听、`state` 64hex、错的 state 回 400、对的 state 2ms 内回 HTML、假授权码打到真上游被归类成 `code-expired` |
+| `probe-actions` | **15 个动作逐个活体巡检**：非法参数必须被拒且理由可读、可逆动作真跑再恢复、破坏性动作用不存在的 id 打（只验拒绝）、花钱的动作默认跳过 |
 
-`--live` 两项在插件没装进任何 profile 的机器上会自动跳过（源码仓库不等于使用者已装）。
+`--live` 三项在插件没装进任何 profile 的机器上会自动跳过（源码仓库不等于使用者已装）。
+
+**关于「跑着旧构建」**：宿主只在启动时装载一次插件树。改完代码重建后，进程里跑的仍是
+装载那一刻的模块 —— 所以 `verify-live` 会比对「宿主进程启动时间」与「已安装副本里
+`lib/index.js` 的修改时间」，不符时打一行 `todo` 提示；加 `--require-live` 才升级成失败。
+`probe-actions` 会直接跳过并说明原因，避免把旧构建的老行为当成新代码的缺陷。
 
 ### 已经跑通的真机证据（2026-11-10，本机）
 
