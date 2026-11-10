@@ -369,3 +369,89 @@ test('流内错误帧：非流式 JSON 响应不逐帧扫描（不白花 JSON.pa
 
   assert.deepEqual(failures, []);
 });
+
+test('用户按停止：请求体读完后客户端断开，上游请求必须被 abort（否则白烧额度）', async (t) => {
+  // 只挂 req.on('aborted') 不够：那个事件只在请求体没读完时触发。
+  // 对话请求的 body 通常一次发完，之后用户按停止 → aborted 永远不来 →
+  // 上游继续跑到结束、继续扣这个账号的额度。已在 Node 24 实测复现。
+  let aborted = false;
+  let chatResolve;
+  const chatSettled = new Promise((resolve) => { chatResolve = resolve; });
+
+  const shim = await startShim({
+    attempts: async () => [{ accountId: 'acc_a', accessToken: async () => 'token-a' }],
+    chat: async (input) => {
+      // 一个「永远不主动结束」的上游：只有 signal 被 abort 才会退出。
+      input.signal.addEventListener('abort', () => {
+        aborted = true;
+        chatResolve?.('aborted');
+      });
+      await new Promise((resolve) => {
+        input.signal.addEventListener('abort', resolve);
+        setTimeout(resolve, 3_000); // 兜底：万一没 abort，测试不要挂 3 秒以上
+      });
+      chatResolve?.('timeout');
+      return new Response('data: [DONE]\n\n', { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    },
+    onWarn: () => undefined,
+  });
+  t.after(async () => { await shim.close(); });
+
+  const controller = new AbortController();
+  const pending = fetch(`${shim.baseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${shim.token}` },
+    body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    signal: controller.signal,
+  }).catch(() => undefined);
+
+  // 等上游请求真的发出去（说明请求体已读完），再断开。
+  await new Promise((resolve) => { setTimeout(resolve, 200); });
+  controller.abort();
+  await pending;
+  await Promise.race([chatSettled, new Promise((resolve) => { setTimeout(resolve, 1_500); })]);
+
+  assert.equal(aborted, true, '客户端断开后必须 abort 上游请求；否则上游跑完、额度照扣');
+});
+
+test('并发 8 个请求：各自独立选号、互不串号（池是共享状态，最容易在这里出错）', async (t) => {
+  // 每个请求都调 `attempts()` 自己算一次候选序列 —— 如果实现里把「本次选中的账号」
+  // 存在模块级变量上，并发时后一个请求会覆盖前一个，A 的令牌被用在 B 的回复上。
+  const usedTokens: string[] = [];
+  const shim = await startShim({
+    attempts: async () => [
+      { accountId: 'acc_a', accessToken: async () => 'token-a' },
+      { accountId: 'acc_b', accessToken: async () => 'token-b' },
+    ],
+    chat: async (input) => {
+      usedTokens.push(input.accessToken);
+      // 故意让每个请求的完成顺序打乱：快的先回、慢的后回。
+      await new Promise((resolve) => { setTimeout(resolve, Math.floor(Math.random() * 40)); });
+      return new Response(`data: {"choices":[{"delta":{"content":"${input.accessToken}"}}]}\n\ndata: [DONE]\n\n`, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    },
+    onWarn: () => undefined,
+  });
+  t.after(async () => { await shim.close(); });
+
+  const replies = await Promise.all(Array.from({ length: 8 }, async () => {
+    const response = await fetch(`${shim.baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${shim.token}` },
+      body: JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'hi' }], stream: true }),
+    });
+    return await response.text();
+  }));
+
+  assert.equal(replies.length, 8);
+  assert.equal(usedTokens.length, 8, '每个请求都该发一次上游请求');
+  // 每个回复里的内容必须等于它自己那次用的令牌：串号会让回复内容是别人的。
+  for (const reply of replies) {
+    const which = reply.includes('token-a') ? 'token-a' : reply.includes('token-b') ? 'token-b' : 'none';
+    assert.notEqual(which, 'none', `回复里没有预期的令牌标记：${reply.slice(0, 120)}`);
+  }
+  // 首号永远可用，所以每个请求都该只用 acc_a（不触发换号）。
+  assert.ok(usedTokens.every((token) => token === 'token-a'), `应全部用首选账号，实际：${usedTokens.join(',')}`);
+});

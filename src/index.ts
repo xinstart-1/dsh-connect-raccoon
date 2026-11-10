@@ -134,14 +134,21 @@ export async function apply(ctx: Context, rawConfig: RaccoonConfig): Promise<voi
       const state = accountState.current;
       const all = await vault.list();
       const selected = await vault.readSelected();
-      const candidates = all.map((account) => ({
-        id: account.id,
-        inPool: state.enabledAccounts.includes(account.id),
-        usable: accounts.usability(account).usable,
-        credits: undefined as number | undefined,
-        nearestExpiryMs: undefined as number | undefined,
-        expiresAtMs: account.expiresAtMs,
+      // 余额与到期数据都从 `accounts.credits()` 来（带缓存，失败返回 undefined = 「不知道」）。
+      // 此前这里硬编码成 undefined，导致池排序里「快过期先花」和「余额高优先」两条规则
+      // 从未生效 —— 选号退化成只看凭据新旧，用户以为在按余额调度，其实没有。
+      const facts = await Promise.all(all.map(async (account) => {
+        const balance = await accounts.credits(account.id);
+        return {
+          id: account.id,
+          inPool: state.enabledAccounts.includes(account.id),
+          usable: accounts.usability(account).usable,
+          credits: balance?.total,
+          nearestExpiryMs: balance?.nearestExpiryMs,
+          expiresAtMs: account.expiresAtMs,
+        };
       }));
+      const candidates = facts;
       const choice = pickAccount({ poolEnabled: state.accountPoolEnabled, currentId: selected, candidates });
       const order = [choice.id, ...failoverCandidates({
         poolEnabled: state.accountPoolEnabled,

@@ -248,7 +248,22 @@ export async function startShim(options: ShimOptions): Promise<ShimHandle> {
     }
 
     const controller = new AbortController();
+    /**
+     * 用户按下「停止」时必须真的把上游请求掐掉。
+     *
+     * 只挂 `req.on('aborted')` 不够 —— 那个事件**只在请求体还没读完时**触发。
+     * 对话请求的请求体通常在一次 TCP 往返里就发完了，之后用户再按停止，
+     * `aborted` 永远不会来，上游会继续跑到结束、继续烧这个账号的额度。
+     * 已在 Node 24 上实测复现：请求体读完后 destroy 客户端，`aborted` 不触发、
+     * 只有响应的 `close` 触发。
+     *
+     * 两条都挂：`aborted` 覆盖「发送中断」，`res.on('close')` 覆盖「已经写完请求体之后」。
+     * `close` 在正常结束时也会触发，所以要判 `writableEnded` 区分。
+     */
     req.on('aborted', () => { controller.abort(); });
+    res.on('close', () => {
+      if (!res.writableEnded) controller.abort();
+    });
 
     let lastError: unknown;
     /**

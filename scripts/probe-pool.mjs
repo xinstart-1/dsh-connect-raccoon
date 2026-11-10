@@ -46,11 +46,14 @@ const buildAccount = (key, nickname) => ({
   savedAtMs: Date.now(),
   nickname,
 });
+// A 凭据更新（排序的最末一级），B 余额更高 —— 用来验证「余额高优先」压过「凭据新」。
 const accountA = { ...buildAccount('sub-A', '账号A'), expiresAtMs: (nowSec + 7200) * 1000 };
 const accountB = buildAccount('sub-B', '账号B');
 
 // ── 假上游 ──────────────────────────────────────────────────────────────
 const seen = [];
+/** 让哪个账号这次回 401（默认 A：B 是首选，先验正常路径）。 */
+let failNext = 'A';
 const fakeUpstream = createServer((req, res) => {
   const path = new URL(req.url ?? '/', 'http://127.0.0.1').pathname;
   if (path === '/api/web/llm/v2/model_catalog') {
@@ -64,15 +67,18 @@ const fakeUpstream = createServer((req, res) => {
     return;
   }
   if (path === '/api/web/points/v1/balance') {
+    // 余额按令牌区分：B 更高。池排序里「余额高优先」若没接线，会恒选 A（凭据更新者）。
+    const auth = req.headers.authorization ?? '';
+    const who = auth.includes(accountB.accessToken) ? 'B' : 'A';
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ code: 0, data: { balance: 500, packages: [] } }));
+    res.end(JSON.stringify({ code: 0, data: { balance: who === 'B' ? 9000 : 100, packages: [] } }));
     return;
   }
   if (path === '/api/web/llm/v2/chat/completions') {
     const auth = req.headers.authorization ?? '';
     const who = auth.includes(accountA.accessToken) ? 'A' : auth.includes(accountB.accessToken) ? 'B' : 'unknown';
     seen.push(who);
-    if (who !== 'B') {
+    if (who === failNext) {
       // 令牌失效：属于「换号有意义」的分类（ADR-6）。
       res.writeHead(401, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ code: 200003, message: 'authorization_verify_error' }));
@@ -106,7 +112,7 @@ await writeFile(join(home, 'dsh-connect-raccoon-state.json'), JSON.stringify({
   autoCheckin: false,
 }, null, 2), 'utf8');
 process.env['DSH_HOME'] = home;
-steps.push('临时 DSH_HOME 里 2 个账号，池已开启；A 凭据更新故先被选中，B 作为后备');
+steps.push('临时 DSH_HOME 里 2 个账号，池已开启；A 凭据更新、B 余额更高（9000 vs 100）');
 
 // ── 用真的 Cordis 装载真插件 ────────────────────────────────────────────
 const record = { adapters: [] };
@@ -168,22 +174,38 @@ if (typeof baseUrl !== 'string' || typeof shimKey !== 'string' || shimKey === ''
     return { status: response.status, text: await response.text() };
   };
 
-  // 关键断言①：A 401 → 自动换到 B，且上游看到的顺序是 A→B。
+  // 关键断言①：余额高的 B 先被选中。
+  // 此前 index.ts 把 credits 硬编码成 undefined，池排序里「快过期先花」与
+  // 「余额高优先」两条规则从未生效，选号退化成只看凭据新旧 ——
+  // 用户以为在按余额调度，其实没有。
   const first = await chat();
-  if (first.status !== 200) problems.push(`换号后应回 200，实际 ${String(first.status)}：${first.text.slice(0, 160)}`);
-  else if (!first.text.includes('ok')) problems.push(`换号后没拿到正文：${first.text.slice(0, 160)}`);
-  if (seen.length !== 2) problems.push(`上游应被调用 2 次（A 失败 → B 成功），实际 ${String(seen.length)} 次：${seen.join(',')}`);
-  else if (seen[0] !== 'A' || seen[1] !== 'B') problems.push(`换号顺序应为 A→B，实际 ${seen.join('→')}`);
-  else steps.push(`换号 A(401) → B(200) ✓ 上游调用序列 ${seen.join('→')}`);
-
-  // 关键断言②：A 已进冷却，第二次请求直接只用 B，不再重复烧一次失败。
-  seen.length = 0;
-  const second = await chat();
-  if (second.status !== 200) problems.push(`第二次请求应回 200，实际 ${String(second.status)}`);
+  if (first.status !== 200) problems.push(`首个请求应成功，实际 ${String(first.status)}：${first.text.slice(0, 160)}`);
+  else if (!first.text.includes('ok')) problems.push(`没拿到正文：${first.text.slice(0, 160)}`);
   if (seen.length !== 1 || seen[0] !== 'B') {
-    problems.push(`A 冷却后应直接只用 B 一次，实际 ${seen.join(',') || '（没有调用）'}`);
+    problems.push(`应直接用余额更高的 B（余额高优先），实际上游调用序列 ${seen.join(',') || '（无）'}`);
   } else {
-    steps.push('第二次请求直接用 B（A 在冷却中，没重复烧失败）✓');
+    steps.push('余额更高的 B 先被选中（「余额高优先」真的接上了）✓');
+  }
+
+  // 关键断言②：把 B 打成 401，同一请求内换到 A。
+  seen.length = 0;
+  failNext = 'B';
+  const second = await chat();
+  if (second.status !== 200) problems.push(`换号后应回 200，实际 ${String(second.status)}`);
+  if (seen.length !== 2 || seen[0] !== 'B' || seen[1] !== 'A') {
+    problems.push(`换号序列应为 B→A，实际 ${seen.join('→') || '（无）'}`);
+  } else {
+    steps.push(`换号 B(401) → A(200) ✓ 上游调用序列 ${seen.join('→')}`);
+  }
+
+  // 关键断言③：B 已进冷却，下次直接用 A，不再重复烧失败。
+  seen.length = 0;
+  const third = await chat();
+  if (third.status !== 200) problems.push(`第三次请求应回 200，实际 ${String(third.status)}`);
+  if (seen.length !== 1 || seen[0] !== 'A') {
+    problems.push(`B 冷却后应直接只用 A 一次，实际 ${seen.join(',') || '（没有调用）'}`);
+  } else {
+    steps.push('第三次请求直接用 A（B 在冷却中，没重复烧失败）✓');
   }
 }
 
@@ -202,7 +224,7 @@ if (problems.length > 0) {
   for (const problem of problems) console.error(`  - ${problem}`);
   process.exitCode = 1;
 } else {
-  console.log('\n账号池 / 自动换号验证通过：真插件 + 真 Cordis + 本地假上游，A 失效后自动落到 B。');
+  console.log('\n账号池 / 自动换号验证通过：余额高的先选、失败自动换号、冷却后不再重复烧。');
 }
 // 显式退出：插件起过监听端口与定时器，不主动退出时进程会一直挂着。
 process.exit(process.exitCode ?? 0);
