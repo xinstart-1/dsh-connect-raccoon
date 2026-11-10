@@ -264,7 +264,23 @@ export function createLoginManager(options: LoginManagerOptions): LoginManager {
   };
 
   return {
-    view: () => current,
+    view() {
+      // 网页会话没有轮询循环（等的是浏览器自己的回调），所以超时只能在这里判：
+      // 过了 deadline 就把相位翻成 expired 并关掉本地服务器，否则端口会一直挂着。
+      if (current.running && current.kind === 'web' && now() >= deadline) {
+        void closeServer();
+        current = {
+          ...current,
+          running: false,
+          phase: 'expired',
+          message: '登录超时，请重新发起',
+          url: null,
+          port: null,
+          error: { code: 'login-timeout', message: '登录超时，请重新发起' },
+        };
+      }
+      return current;
+    },
 
     async startWeb() {
       if (disposed) return idle();
@@ -340,7 +356,7 @@ export function createLoginManager(options: LoginManagerOptions): LoginManager {
         url,
         port,
       };
-      // 超时由上层轮询判：这里只把 deadline 报出去，不另起定时器（少一个要清的句柄）。
+      // 超时由 view() 判定（等的是浏览器回调，没有轮询循环可挂超时），这里只报 deadline。
       return current;
     },
 

@@ -197,7 +197,7 @@ export function createAccounts(options: AccountsOptions): Accounts {
 
     usability(account) {
       if (this.cooldownMs(account.id) > 0) {
-        return { usable: false, reason: '限定流冷却中' };
+        return { usable: false, reason: '限流冷却中' };
       }
       if (account.expiresAtMs > 0 && account.expiresAtMs <= now() && account.refreshToken === '') {
         return { usable: false, reason: '登录令牌已过期，请重新登录' };

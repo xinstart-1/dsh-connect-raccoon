@@ -46,8 +46,8 @@ export interface ShimOptions {
   attempts: (input: { model: string }) => Promise<ShimAttempt[]>;
   /** 发一次上游对话请求；返回未消费的响应。 */
   chat: (input: { accessToken: string; body: unknown; signal: AbortSignal }) => Promise<Response>;
-  /** 换号发生时通知宿主（卡片上要显示「这次用了谁」）。 */
-  onFailover?: (detail: { fromId: string; toId: string; reason: string }) => void;
+  /** 换号发生时通知宿主（卡片上要显示「这次用了谁」，并据此给失败账号记冷却）。 */
+  onFailover?: (detail: { fromId: string; toId: string; reason: string; code: string }) => void;
   /** 诊断日志。 */
   onWarn?: (message: string) => void;
 }
@@ -89,6 +89,15 @@ function writeError(res: ServerResponse, status: number, code: string, message: 
 function statusOf(error: unknown): number {
   const status = (error as { status?: unknown }).status;
   return typeof status === 'number' && status >= 400 && status <= 599 ? status : 502;
+}
+
+/** HTTP 状态 → 换号分类码。分类决定宿主给这个账号记多久冷却。 */
+function codeForStatus(status: number): RaccoonError['code'] {
+  if (status === 401 || status === 403) return 'authorization-verify';
+  if (status === 429) return 'rate-limited';
+  if (status === 400) return 'bad-request';
+  if (status === 404) return 'model-not-found';
+  return 'upstream-error';
 }
 
 /** 该失败是否值得换下一个账号。 */
@@ -212,15 +221,34 @@ export async function startShim(options: ShimOptions): Promise<ShimHandle> {
     const controller = new AbortController();
     req.on('aborted', () => { controller.abort(); });
 
-    let previousId: string | undefined;
     let lastError: unknown;
-    for (const attempt of attempts) {
+    /**
+     * 记一次「这个账号这次没成」。
+     *
+     * 每次**放弃一个账号**就报一次，而不是等下一个账号成功才报：
+     * 全池都失败时也必须让宿主知道每个账号都试过（冷却要按账号记），
+     * 否则下一个请求会从头再烧一遍同样的失败。
+     */
+    const reportGiveUp = (accountId: string, nextId: string | undefined, error: unknown): void => {
+      if (nextId === undefined) return;
+      options.onFailover?.({
+        fromId: accountId,
+        toId: nextId,
+        reason: messageOf(error),
+        code: errorCodeOf(error),
+      });
+    };
+
+    for (let index = 0; index < attempts.length; index += 1) {
+      const attempt = attempts[index]!;
+      const nextId = attempts[index + 1]?.accountId;
       let accessToken: string;
       try {
         accessToken = await attempt.accessToken();
       } catch (error) {
         lastError = error;
-        previousId = attempt.accountId;
+        // 取不到令牌的账号有一次额外机会：换号前先让它自己的续期失败一次。
+        reportGiveUp(attempt.accountId, nextId, error);
         continue;
       }
       let response: Response;
@@ -234,14 +262,15 @@ export async function startShim(options: ShimOptions): Promise<ShimHandle> {
           return;
         }
         warn(`账号 ${attempt.accountId} 失败（${messageOf(error)}），尝试换号`);
-        previousId = attempt.accountId;
+        reportGiveUp(attempt.accountId, nextId, error);
         continue;
       }
       if (!response.ok) {
         const message = await upstreamMessage(response);
-        // 开关一次响应体不影响 `ok`：这里只为了给出可读文案。
+        // 开关一次响应体不影响 `ok`：这里只为了给出可读文案与正确的分类码。
+        // 分类码决定宿主给这个账号记多久冷却，所以不能一律归成 upstream-error。
         lastError = new RaccoonError({
-          code: 'upstream-error',
+          code: codeForStatus(response.status),
           message,
           status: response.status,
         });
@@ -250,11 +279,8 @@ export async function startShim(options: ShimOptions): Promise<ShimHandle> {
           writeError(res, response.status, 'upstream-error', message);
           return;
         }
-        previousId = attempt.accountId;
+        reportGiveUp(attempt.accountId, nextId, lastError);
         continue;
-      }
-      if (previousId !== undefined && previousId !== attempt.accountId) {
-        options.onFailover?.({ fromId: previousId, toId: attempt.accountId, reason: messageOf(lastError) });
       }
       await relay(response, res);
       return;

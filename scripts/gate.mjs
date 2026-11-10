@@ -29,6 +29,8 @@ const steps = [
   ['smoke-apply', [process.execPath, 'scripts/smoke-apply.mjs']],
   // 用真的 Cordis Context 装载一次：假 ctx 验不出「Cordis 接不接受这套装配」。
   ['check-cordis', [process.execPath, 'scripts/check-cordis.mjs']],
+  // profile 里那份**已安装副本**与源码构建是否一致（file: 依赖可能是拷贝而不是链接）。
+  ['check-profile', [process.execPath, 'scripts/check-profile.mjs']],
 ];
 
 const failures = [];

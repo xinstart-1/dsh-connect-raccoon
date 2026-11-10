@@ -157,7 +157,13 @@ export async function apply(ctx: Context, rawConfig: RaccoonConfig): Promise<voi
     },
     chat: (input) => client.chatStream({ accessToken: input.accessToken, body: input.body, signal: input.signal }),
     onFailover: (detail) => {
-      warn(`自动换号：${detail.fromId} → ${detail.toId}（${detail.reason}）`);
+      warn(`自动换号：${detail.fromId} → ${detail.toId}（${detail.code}：${detail.reason}）`);
+      // 刚失败过的账号先退出候选池：否则下一个请求又会挑到它，白烧一次失败。
+      // 限流与令牌失效要等久一点，其余（5xx / 网络）只压一分钟。
+      const ms = detail.code === 'rate-limited' || detail.code === 'authorization-verify'
+        ? 10 * 60_000
+        : 60_000;
+      accounts.markCooldown(detail.fromId, ms);
     },
     onWarn: warn,
   });
